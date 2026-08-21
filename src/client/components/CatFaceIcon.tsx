@@ -1,0 +1,24 @@
+interface CatFaceIconProps {
+  className?: string;
+}
+
+export function CatFaceIcon({ className }: CatFaceIconProps) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 36 32"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 13 6 3l9 6a14 14 0 0 1 6 0l9-6-1 10c2 2.2 3 5 3 8 0 6.2-6.1 10-14 10S4 27.2 4 21c0-3 1-5.8 3-8Z" />
+      <path d="m8.2 6.1 5.4 3.5M27.8 6.1l-5.4 3.5" opacity=".65" />
+      <path d="M9.5 16c1.3-1.2 3.8-1.2 5.1 0-1.3 1.5-3.8 1.5-5.1 0Zm11.9 0c1.3-1.2 3.8-1.2 5.1 0-1.3 1.5-3.8 1.5-5.1 0Z" />
+      <path d="M12 15.3v1.5m12-1.5v1.5" strokeWidth="1.5" />
+      <path d="m15.5 21 2.5 2.1 2.5-2.1Z" fill="currentColor" />
+      <path d="M18 23.2v1.7m0 0c-1.1 1.4-2.7 1.8-4.1.9m4.1-.9c1.1 1.4 2.7 1.8 4.1.9M13 21.8 4 19.9m9.1 4.2L2 24m11.7 2.3-8.8 2.1m18.1-6.6 9-1.9m-9.1 4.2L34 24m-11.7 2.3 8.8 2.1" />
+    </svg>
+  );
+}

@@ -1,0 +1,45 @@
+{
+  "name": "guppycube",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "dev": "bun scripts/generate-validators.ts && vite",
+    "build": "bun scripts/generate-validators.ts && tsc -b && bun run build:bundle",
+    "build:bundle": "vite build && bun scripts/nest-production-assets.ts",
+    "deploy": "bun run check && wrangler deploy",
+    "deploy:dry": "bun run check && wrangler deploy --dry-run",
+    "test": "bun scripts/generate-validators.ts && vitest run",
+    "test:e2e": "playwright test",
+    "test:watch": "vitest",
+    "typecheck": "bun scripts/generate-validators.ts && tsc -b --pretty false",
+    "types:worker": "wrangler types src/worker-configuration.d.ts",
+    "check": "bun scripts/generate-validators.ts && bun run types:worker && tsc -b && vitest run && bun run build:bundle"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "hono": "^4.13.3",
+    "json-schema-to-ts": "^3.1.1",
+    "lucide-react": "^1.33.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.53.1",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260821.1",
+    "@playwright/test": "^1.62.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.125.0"
+  }
+}
