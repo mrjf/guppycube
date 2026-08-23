@@ -13,6 +13,12 @@ export const ASSIST_DEFINITIONS = [
     description: "Draw and end your turn automatically when no legal play is available.",
     defaultPolicy: "default-off",
   },
+  {
+    id: "rack-meld-highlights",
+    label: "Rack meld highlights",
+    description: "Underline complete runs and groups in your autosorted rack.",
+    defaultPolicy: "default-off",
+  },
 ] as const;
 
 export const ASSIST_IDS = ASSIST_DEFINITIONS.map((assist) => assist.id) as Array<

@@ -2,8 +2,6 @@
 
 A complete online tile-table game for 2–4 players. It supports live 2-minute turns and 72-hour correspondence turns, with an authoritative rules engine, private racks, persistent rooms, hibernating WebSockets, and modular tile designs.
 
-guppycube is an original implementation of familiar tile-game mechanics. It is not affiliated with or endorsed by the owners of the Rummikub trademark.
-
 ## Stack
 
 - Bun package manager and scripts
@@ -26,7 +24,7 @@ bun run dev
 
 Use Bun 1.3.14 or newer, then open the shown local URL. If a Bono-compatible local Dev Hub is running, the Vite server registers automatically and keeps its entry alive with a five-second heartbeat. Hub discovery is optional and never blocks the game.
 
-To test multiplayer, create a room in one browser and open the invite in another browser/profile.
+To test multiplayer, create a room in one browser and open the invite in another browser/profile. The timeout E2E cases use a loopback-only per-room override so they do not wait for the production two-minute deadline.
 
 Local development rooms survive reloads and dev-server restarts. Room state is stored in `.wrangler/state`, and an API-scoped `HttpOnly` browser cookie tells the server which player this browser controls. The static client derives only the room code from the shared URL; JavaScript never reads or submits the player capability. Use the in-game exit action when you intentionally want to return to the new/join table screen.
 
@@ -58,15 +56,15 @@ Free-plan limits are account-wide. When a limit is reached, Cloudflare rejects a
 
 ## Rules implemented
 
-- 106 tiles: two copies of 1–13 in four colors, plus two jokers
+- 106 tiles: two copies of 1–13 in four colors, plus two wildcards
 - 14 tiles dealt to each player
 - Opening melds must total at least 30 and use only the player's rack; after those melds qualify, the player may also rearrange the table in the same turn
 - Groups: 3–4 equal numbers in distinct colors
 - Runs: 3+ consecutive numbers in one color, bounded by 1 and 13
-- Positional joker validation and represented-value scoring
+- Positional wildcard validation and represented-value scoring
 - Full table rearrangement after a player has opened
 - Draw one tile to end a turn
-- First empty rack wins; remaining rack values determine scoring; jokers count 30
+- First empty rack wins; remaining rack values determine scoring; wildcards count 30
 - When the pool is empty and every player passes, the lowest rack value wins
 - Secure random shuffle, 2-minute live deadlines, and 72-hour correspondence deadlines
 - Extensible per-player assists, beginning with a no-legal-move alert and server-side auto-draw
@@ -75,15 +73,14 @@ When a table is created, each assist can be allowed on by default, allowed off b
 
 The client stages table changes locally. An illegal layout never mutates the shared table: the server rejects it and leaves the player's draft visible for correction.
 
-## Add a tile design
+## Add an appearance theme
 
-Tile visuals are deliberately independent from game logic:
+Room colors and tile visuals are deliberately independent from each other and from game logic:
 
-1. Add one entry to `src/client/themes.ts`.
-2. Add a matching `.theme-yourname` block in `src/client/styles.css`.
-3. Define the semantic variables such as `--tile-face`, `--tile-edge`, `--table`, `--color-coral`, `--color-sun`, `--color-ocean`, and `--color-ink`.
+1. Add a room palette to `COLOR_THEMES` in `src/client/themes.ts`, then add its matching `.color-yourname` variables in `src/client/styles.css`.
+2. Add a tile set to `TILE_THEMES`, then add its matching `.tiles-yourname` variables for the tile face, edge, colored marks, shape, and texture.
 
-Every tile, meld, rack, and board automatically adopts the new set. The included Clubhouse, After dark, and Poolside themes are working examples.
+Players can mix any room palette with any tile set from the Appearance panel, and both choices persist on their device. The game includes nine room palettes and seven tile sets as working examples.
 
 ## Project map
 

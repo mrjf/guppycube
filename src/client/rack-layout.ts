@@ -1,5 +1,6 @@
 export const RACK_ROW_COUNT = 2;
 export const MIN_RACK_SLOTS_PER_ROW = 7;
+export const MANUAL_RACK_SLOTS_PER_ROW = 14;
 const MAX_RACK_SLOTS_PER_ROW = 53;
 
 export interface RackLayout {
@@ -36,9 +37,13 @@ function visualSlotIndices(layout: RackLayout): number[] {
   ).flat();
 }
 
-function withCapacity(layout: RackLayout, tileCount: number): RackLayout {
+function withCapacity(
+  layout: RackLayout,
+  tileCount: number,
+  minimumSlotsPerRow = MIN_RACK_SLOTS_PER_ROW,
+): RackLayout {
   const slotsPerRow = Math.max(
-    MIN_RACK_SLOTS_PER_ROW,
+    minimumSlotsPerRow,
     layout.slotsPerRow,
     Math.ceil(tileCount / RACK_ROW_COUNT),
   );
@@ -75,10 +80,14 @@ export function createRackLayout(
   return layout;
 }
 
-export function reconcileRackLayout(layout: RackLayout, tileIds: string[]): RackLayout {
+export function reconcileRackLayout(
+  layout: RackLayout,
+  tileIds: string[],
+  minimumSlotsPerRow = MIN_RACK_SLOTS_PER_ROW,
+): RackLayout {
   const wanted = new Set(tileIds);
   const retained = new Set<string>();
-  const next = withCapacity(layout, tileIds.length);
+  const next = withCapacity(layout, tileIds.length, minimumSlotsPerRow);
   next.slots = next.slots.map((tileId) => {
     if (tileId === null || !wanted.has(tileId) || retained.has(tileId)) return null;
     retained.add(tileId);

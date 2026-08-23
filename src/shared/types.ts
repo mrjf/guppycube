@@ -1,4 +1,12 @@
-export { COMPUTER_STRATEGIES, TILE_COLORS } from "../schemas";
+export {
+  COMPUTER_STRATEGIES,
+  TILE_COLORS,
+  TILE_COPIES_PER_NUMBER_AND_COLOR,
+  TILE_NUMBER_MAX,
+  TILE_NUMBER_MIN,
+  TILE_SET_SIZE,
+  WILDCARD_TILE_COUNT,
+} from "../schemas";
 export { ASSIST_DEFINITIONS, ASSIST_IDS, ASSIST_POLICIES } from "./assists";
 export type {
   AddComputerInput,

@@ -38,7 +38,7 @@ export const schemaCatalogEntries = [
     title: "Tile",
     typeName: "Tile",
     category: "business",
-    description: "A numbered or joker tile in the shared Guppycube tile set.",
+    description: "A numbered or wildcard tile in the shared Guppycube tile set.",
     schema: tileSchema,
   },
   {

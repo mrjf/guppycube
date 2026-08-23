@@ -164,8 +164,6 @@ test("streams repeated Guppy Bot turns into the human UI without a page refresh"
       await expect(page.locator(".table-topline")).toContainText(
         `${after.board.flatMap((meld) => meld.tileIds).length} tiles down`,
       );
-      await expect(page.locator(".rack-heading h2 small")).toHaveText(`${after.myRack.length} tiles`);
-
       await expect.poll(() => socketStates.some((state) =>
         state.version === after.version
         && state.currentPlayerId === after.currentPlayerId

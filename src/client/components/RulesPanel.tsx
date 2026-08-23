@@ -41,8 +41,8 @@ export function RulesPanel({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section ref={panelRef} className="rules-panel" role="dialog" aria-modal="true" aria-labelledby="rules-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
+    <div className="modal-backdrop" role="presentation" onPointerDown={onClose}>
+      <section ref={panelRef} className="rules-panel" role="dialog" aria-modal="true" aria-labelledby="rules-title" tabIndex={-1} onPointerDown={(event) => event.stopPropagation()}>
         <button className="icon-button rules-close" type="button" onClick={onClose} aria-label="Close rules">
           <X size={20} />
         </button>
@@ -53,8 +53,8 @@ export function RulesPanel({ onClose }: { onClose: () => void }) {
           <article><span>02</span><h3>Build groups</h3><p>Three or four of the same number, each in a different color.</p></article>
           <article><span>03</span><h3>Build runs</h3><p>Three or more consecutive numbers in one color. The sequence stays between 1 and 13.</p></article>
           <article><span>04</span><h3>Remix the table</h3><p>Once your opening melds qualify, split and rearrange any table melds—as long as every tile finishes in a valid meld.</p></article>
-          <article><span>05</span><h3>Use jokers</h3><p>A joker shows the tile it represents. After opening, free it by leaving its old set valid—then use it in a valid set that same turn. At least one rack tile must also be played.</p></article>
-          <article><span>06</span><h3>Go out</h3><p>Play every tile to win. Otherwise draw one tile and end your turn. Jokers left on a rack count 30.</p></article>
+          <article><span>05</span><h3>Use wildcards</h3><p>A wildcard shows the tile it represents. After opening, free it by leaving its old set valid—then use it in a valid set that same turn. At least one rack tile must also be played.</p></article>
+          <article><span>06</span><h3>Go out</h3><p>Play every tile to win. Otherwise draw one tile and end your turn. Wildcards left on a rack count 30.</p></article>
         </div>
         <section className="keyboard-guide" aria-labelledby="keyboard-guide-title">
           <div>

@@ -1,6 +1,6 @@
 import { validateMeld } from "./rules";
 import type { Tile, TileColor } from "./types";
-import { TILE_COLORS } from "./types";
+import { TILE_COLORS, TILE_NUMBER_MAX, TILE_NUMBER_MIN } from "./types";
 
 export type TileSortMode = "color-first" | "number-first";
 
@@ -140,8 +140,8 @@ export function findLinkedRackTileIds(
 
 function groupOrder(tileIds: string[], tiles: Record<string, Tile>): string[] | null {
   if (tileIds.length < 3 || tileIds.length > 4) return null;
-  const numberedIds = tileIds.filter((id) => !tiles[id]?.joker);
-  const jokerIds = tileIds.filter((id) => tiles[id]?.joker).sort();
+  const numberedIds = tileIds.filter((id) => !tiles[id]?.wildcard);
+  const wildcardIds = tileIds.filter((id) => tiles[id]?.wildcard).sort();
   const numbered = numberedIds.map((id) => tiles[id]).filter((tile): tile is Tile => Boolean(tile));
   const value = numbered[0]?.value;
   if (numbered.length === 0 || value === null || value === undefined) return null;
@@ -151,12 +151,12 @@ function groupOrder(tileIds: string[], tiles: Record<string, Tile>): string[] | 
   if (usedColors.some((color) => !color) || new Set(usedColors).size !== usedColors.length) return null;
 
   const availableColors = TILE_COLORS.filter((color) => !usedColors.includes(color));
-  if (availableColors.length < jokerIds.length) return null;
-  const assignedJokers = new Map(jokerIds.map((id, index) => [id, availableColors[index]]));
+  if (availableColors.length < wildcardIds.length) return null;
+  const assignedWildcards = new Map(wildcardIds.map((id, index) => [id, availableColors[index]]));
 
   return [...tileIds].sort((leftId, rightId) => {
-    const leftColor = tiles[leftId]?.color ?? assignedJokers.get(leftId);
-    const rightColor = tiles[rightId]?.color ?? assignedJokers.get(rightId);
+    const leftColor = tiles[leftId]?.color ?? assignedWildcards.get(leftId);
+    const rightColor = tiles[rightId]?.color ?? assignedWildcards.get(rightId);
     const leftRank = leftColor ? (COLOR_ORDER.get(leftColor) ?? TILE_COLORS.length) : TILE_COLORS.length;
     const rightRank = rightColor ? (COLOR_ORDER.get(rightColor) ?? TILE_COLORS.length) : TILE_COLORS.length;
     return leftRank - rightRank || leftId.localeCompare(rightId);
@@ -164,9 +164,9 @@ function groupOrder(tileIds: string[], tiles: Record<string, Tile>): string[] | 
 }
 
 function runOrder(tileIds: string[], tiles: Record<string, Tile>): string[] | null {
-  if (tileIds.length < 3 || tileIds.length > 13) return null;
-  const numberedIds = tileIds.filter((id) => !tiles[id]?.joker);
-  const jokerIds = tileIds.filter((id) => tiles[id]?.joker).sort();
+  if (tileIds.length < 3 || tileIds.length > TILE_NUMBER_MAX) return null;
+  const numberedIds = tileIds.filter((id) => !tiles[id]?.wildcard);
+  const wildcardIds = tileIds.filter((id) => tiles[id]?.wildcard).sort();
   if (numberedIds.length === 0) return null;
 
   const colors = numberedIds.map((id) => tiles[id]?.color);
@@ -180,23 +180,23 @@ function runOrder(tileIds: string[], tiles: Record<string, Tile>): string[] | nu
     idByValue.set(value, id);
   }
 
-  for (let start = 1; start <= 14 - tileIds.length; start += 1) {
+  for (let start = TILE_NUMBER_MIN; start <= TILE_NUMBER_MAX + 1 - tileIds.length; start += 1) {
     const end = start + tileIds.length - 1;
     if ([...idByValue.keys()].some((value) => value < start || value > end)) continue;
     const missingValues = Array.from(
       { length: tileIds.length },
       (_, index) => start + index,
     ).filter((value) => !idByValue.has(value));
-    if (missingValues.length !== jokerIds.length) continue;
+    if (missingValues.length !== wildcardIds.length) continue;
 
-    let jokerIndex = 0;
+    let wildcardIndex = 0;
     return Array.from({ length: tileIds.length }, (_, index) => {
       const value = start + index;
       const numberedId = idByValue.get(value);
       if (numberedId) return numberedId;
-      const jokerId = jokerIds[jokerIndex];
-      jokerIndex += 1;
-      return jokerId!;
+      const wildcardId = wildcardIds[wildcardIndex];
+      wildcardIndex += 1;
+      return wildcardId!;
     });
   }
   return null;
@@ -204,7 +204,7 @@ function runOrder(tileIds: string[], tiles: Record<string, Tile>): string[] | nu
 
 /**
  * Keeps every meld predictable after a move. Valid runs retain their current
- * joker positions; unordered runs are repaired into ascending order and groups
+ * wildcard positions; unordered runs are repaired into ascending order and groups
  * use the standard color order.
  */
 export function normalizeMeldTileIds(
@@ -219,7 +219,7 @@ export function normalizeMeldTileIds(
   const asRun = runOrder(tileIds, tiles);
   if (asRun) return asRun;
 
-  const numbered = tileIds.map((id) => tiles[id]).filter((tile): tile is Tile => Boolean(tile && !tile.joker));
+  const numbered = tileIds.map((id) => tiles[id]).filter((tile): tile is Tile => Boolean(tile && !tile.wildcard));
   const sameValue = numbered.length > 0 && numbered.every((tile) => tile.value === numbered[0]?.value);
   return sortTileIds(tileIds, tiles, sameValue ? "color-first" : "number-first");
 }

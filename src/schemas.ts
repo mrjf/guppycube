@@ -12,6 +12,14 @@ const gameStatuses = ["lobby", "playing", "finished"] as const;
 const eventKinds = ["created", "joined", "started", "played", "drew", "timeout", "won"] as const;
 
 export const TILE_COLORS = ["coral", "sun", "ocean", "ink"] as const;
+export const TILE_NUMBER_MIN = 1;
+export const TILE_NUMBER_MAX = 13;
+export const TILE_COPIES_PER_NUMBER_AND_COLOR = 2;
+export const WILDCARD_TILE_COUNT = 2;
+export const TILE_SET_SIZE = TILE_COLORS.length
+  * (TILE_NUMBER_MAX - TILE_NUMBER_MIN + 1)
+  * TILE_COPIES_PER_NUMBER_AND_COLOR
+  + WILDCARD_TILE_COUNT;
 export const COMPUTER_STRATEGIES = ["basic"] as const;
 
 const nullableComputerStrategy = {
@@ -44,10 +52,10 @@ const tileShape = {
   properties: {
     id: identifier,
     color: { anyOf: [{ enum: TILE_COLORS }, { type: "null" }] },
-    value: { anyOf: [{ type: "integer", minimum: 1, maximum: 13 }, { type: "null" }] },
-    joker: { type: "boolean" },
+    value: { anyOf: [{ type: "integer", minimum: TILE_NUMBER_MIN, maximum: TILE_NUMBER_MAX }, { type: "null" }] },
+    wildcard: { type: "boolean" },
   },
-  required: ["id", "color", "value", "joker"],
+  required: ["id", "color", "value", "wildcard"],
 } as const;
 
 const meldShape = {
@@ -55,7 +63,7 @@ const meldShape = {
   additionalProperties: false,
   properties: {
     id: identifier,
-    tileIds: { type: "array", items: identifier, minItems: 1, maxItems: 13 },
+    tileIds: { type: "array", items: identifier, minItems: 1, maxItems: TILE_NUMBER_MAX },
   },
   required: ["id", "tileIds"],
 } as const;
@@ -67,7 +75,7 @@ const turnDraftShape = {
     playerId: identifier,
     turnStartedAt: timestamp,
     sequence: timestamp,
-    board: { type: "array", items: meldShape, maxItems: 106 },
+    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
   },
   required: ["playerId", "turnStartedAt", "sequence", "board"],
 } as const;
@@ -78,8 +86,8 @@ const publicPlayerShape = {
   properties: {
     id: identifier,
     name: { type: "string", minLength: 1, maxLength: 20 },
-    rackCount: { type: "integer", minimum: 0, maximum: 106 },
-    rackTileIds: { type: "array", items: identifier, maxItems: 106 },
+    rackCount: { type: "integer", minimum: 0, maximum: TILE_SET_SIZE },
+    rackTileIds: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
     opened: { type: "boolean" },
     connected: { type: "boolean" },
     isHost: { type: "boolean" },
@@ -116,7 +124,7 @@ const storedPlayerShape = {
     id: identifier,
     name: { type: "string", minLength: 1, maxLength: 20 },
     tokenHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
-    rack: { type: "array", items: identifier, maxItems: 106 },
+    rack: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
     opened: { type: "boolean" },
     joinedAt: timestamp,
     isComputer: { type: "boolean" },
@@ -138,7 +146,7 @@ const turnActionVariants = [
     additionalProperties: false,
     properties: {
       type: { const: "commit" },
-      board: { type: "array", items: meldShape, maxItems: 106 },
+      board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
     },
     required: ["type", "board"],
   },
@@ -193,13 +201,14 @@ const publicGameStateShape = {
     turnDeadline: nullableTimestamp,
     currentPlayerId: nullableIdentifier,
     winnerId: nullableIdentifier,
-    poolCount: { type: "integer", minimum: 0, maximum: 106 },
-    board: { type: "array", items: meldShape, maxItems: 106 },
+    poolCount: { type: "integer", minimum: 0, maximum: TILE_SET_SIZE },
+    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
     players: { type: "array", items: publicPlayerShape, minItems: 1, maxItems: 4 },
     myPlayerId: identifier,
-    myRack: { type: "array", items: identifier, maxItems: 106 },
-    myTurnDraft: { anyOf: [{ type: "array", items: meldShape, maxItems: 106 }, { type: "null" }] },
-    tiles: { type: "object", additionalProperties: tileShape, maxProperties: 106 },
+    myRack: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
+    turnDraft: { anyOf: [{ type: "array", items: meldShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
+    myTurnDraft: { anyOf: [{ type: "array", items: meldShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
+    tiles: { type: "object", additionalProperties: tileShape, maxProperties: TILE_SET_SIZE },
     history: { type: "array", items: gameEventShape, maxItems: 12 },
     scores: scoreShape,
     assistPolicy: assistPolicyShape,
@@ -223,6 +232,7 @@ const publicGameStateShape = {
     "players",
     "myPlayerId",
     "myRack",
+    "turnDraft",
     "myTurnDraft",
     "tiles",
     "history",
@@ -235,7 +245,7 @@ const publicGameStateShape = {
 
 export const publicGameStateSchema = {
   $schema: dialect,
-  $id: "https://guppycube.local/schemas/public-game-state",
+  $id: "https://guppycube.local/schemas/public-game-state-v2",
   ...publicGameStateShape,
 } as const;
 
@@ -261,12 +271,13 @@ export const storedGameSchema = {
     updatedAt: timestamp,
     turnStartedAt: nullableTimestamp,
     turnDeadline: nullableTimestamp,
+    turnDurationMs: { type: "integer", minimum: 1 },
     turnIndex: { type: "integer", minimum: 0, maximum: 3 },
     winnerId: nullableIdentifier,
     players: { type: "array", items: storedPlayerShape, minItems: 1, maxItems: 4 },
-    pool: { type: "array", items: identifier, maxItems: 106 },
-    board: { type: "array", items: meldShape, maxItems: 106 },
-    tiles: { type: "object", additionalProperties: tileShape, maxProperties: 106 },
+    pool: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
+    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
+    tiles: { type: "object", additionalProperties: tileShape, maxProperties: TILE_SET_SIZE },
     history: { type: "array", items: gameEventShape, maxItems: 40 },
     scores: scoreShape,
     consecutiveEmptyDraws: { type: "integer", minimum: 0, maximum: 4 },
@@ -381,7 +392,7 @@ export const saveTurnDraftInputSchema = {
   properties: {
     turnStartedAt: timestamp,
     sequence: timestamp,
-    board: { type: "array", items: meldShape, maxItems: 106 },
+    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
   },
   required: ["turnStartedAt", "sequence", "board"],
 } as const;

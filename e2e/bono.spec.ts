@@ -81,6 +81,7 @@ test("exposes a searchable schema inventory and its validated API catalog", asyn
           turnStartedAt?: { type?: string; minimum?: number };
           sequence?: { type?: string; minimum?: number };
           board?: { type?: string; maxItems?: number };
+          turnDraft?: { anyOf?: Array<{ type?: string }> };
           myTurnDraft?: { anyOf?: Array<{ type?: string }> };
         };
       };
@@ -110,10 +111,11 @@ test("exposes a searchable schema inventory and its validated API catalog", asyn
     schema: expect.objectContaining({
       properties: expect.objectContaining({
         assistPolicy: expect.objectContaining({
-          required: ["no-move-alert", "auto-draw"],
+          required: ["no-move-alert", "auto-draw", "rack-meld-highlights"],
           properties: {
             "no-move-alert": { enum: ["default-on", "default-off", "disallowed"] },
             "auto-draw": { enum: ["default-on", "default-off", "disallowed"] },
+            "rack-meld-highlights": { enum: ["default-on", "default-off", "disallowed"] },
           },
         }),
       }),
@@ -125,7 +127,7 @@ test("exposes a searchable schema inventory and its validated API catalog", asyn
     schemaId: "https://guppycube.local/schemas/set-assist-input",
     schema: expect.objectContaining({
       properties: expect.objectContaining({
-        assistId: { enum: ["no-move-alert", "auto-draw"] },
+        assistId: { enum: ["no-move-alert", "auto-draw", "rack-meld-highlights"] },
         enabled: { type: "boolean" },
       }),
     }),
@@ -146,10 +148,16 @@ test("exposes a searchable schema inventory and its validated API catalog", asyn
   expect(catalog.schemas).toContainEqual(expect.objectContaining({
     key: "publicGameStateSchema",
     category: "business",
-    schemaId: "https://guppycube.local/schemas/public-game-state",
+    schemaId: "https://guppycube.local/schemas/public-game-state-v2",
     schema: expect.objectContaining({
-      required: expect.arrayContaining(["myTurnDraft"]),
+      required: expect.arrayContaining(["turnDraft", "myTurnDraft"]),
       properties: expect.objectContaining({
+        turnDraft: expect.objectContaining({
+          anyOf: expect.arrayContaining([
+            expect.objectContaining({ type: "array" }),
+            { type: "null" },
+          ]),
+        }),
         myTurnDraft: expect.objectContaining({
           anyOf: expect.arrayContaining([
             expect.objectContaining({ type: "array" }),
@@ -252,6 +260,7 @@ test("opens an invite without a cookie, joins it, and rejects a legacy six-chara
       assistPolicy: {
         "no-move-alert": "default-on",
         "auto-draw": "default-off",
+        "rack-meld-highlights": "default-off",
       },
     },
   });

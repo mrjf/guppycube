@@ -34,9 +34,14 @@ describe("schema catalog", () => {
       name: "Ada",
       mode: "realtime",
       maxPlayers: 2,
-      assistPolicy: { "no-move-alert": "default-on", "auto-draw": "sometimes" },
+      assistPolicy: {
+        "no-move-alert": "default-on",
+        "auto-draw": "sometimes",
+        "rack-meld-highlights": "default-off",
+      },
     })).toBe(false);
     expect(validators.setAssistInput({ assistId: "auto-draw", enabled: true })).toBe(true);
+    expect(validators.setAssistInput({ assistId: "rack-meld-highlights", enabled: true })).toBe(true);
     expect(validators.setAssistInput({ assistId: "future-assist", enabled: true })).toBe(false);
   });
 });

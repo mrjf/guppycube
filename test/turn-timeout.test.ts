@@ -110,8 +110,12 @@ describe("turn timeout resolution", () => {
       sequence: 1,
       board: proposedBoard,
     })).toEqual({ ok: true });
-    expect((await room.getPublicState("host", hostToken)).myTurnDraft).toEqual(proposedBoard);
-    expect((await room.getPublicState("guest", guestToken)).myTurnDraft).toBeNull();
+    const savedForPlayer = await room.getPublicState("host", hostToken);
+    const visibleToOpponent = await room.getPublicState("guest", guestToken);
+    expect(savedForPlayer.myTurnDraft).toEqual(proposedBoard);
+    expect(savedForPlayer.turnDraft).toEqual(proposedBoard);
+    expect(visibleToOpponent.myTurnDraft).toBeNull();
+    expect(visibleToOpponent.turnDraft).toEqual(proposedBoard);
     await expireTurn(room);
 
     expect(await runDurableObjectAlarm(room)).toBe(true);

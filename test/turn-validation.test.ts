@@ -54,13 +54,13 @@ describe("meld state space", () => {
     }
   });
 
-  it("accepts a joker in every position of every three-tile run", () => {
+  it("accepts a wildcard in every position of every three-tile run", () => {
     for (const color of TILE_COLORS) {
       for (let start = 1; start <= 11; start += 1) {
-        for (let jokerIndex = 0; jokerIndex < 3; jokerIndex += 1) {
+        for (let wildcardIndex = 0; wildcardIndex < 3; wildcardIndex += 1) {
           const tileIds = Array.from(
             { length: 3 },
-            (_, index) => index === jokerIndex ? "joker-1" : `${color}-${start + index}-1`,
+            (_, index) => index === wildcardIndex ? "wildcard-1" : `${color}-${start + index}-1`,
           );
           expect(validateMeld(tileIds, tiles), tileIds.join(",")).toMatchObject({
             valid: true,
@@ -72,7 +72,7 @@ describe("meld state space", () => {
     }
   });
 
-  it("rejects gaps, descending runs, boundary wrapping, and all-joker melds", () => {
+  it("rejects gaps, descending runs, boundary wrapping, and all-wildcard melds", () => {
     for (const color of TILE_COLORS) {
       for (let start = 1; start <= 10; start += 1) {
         expect(validateMeld([
@@ -90,9 +90,9 @@ describe("meld state space", () => {
       }
     }
 
-    expect(validateMeld(["joker-1", "coral-1-1", "coral-2-1"], tiles).valid).toBe(false);
-    expect(validateMeld(["coral-12-1", "coral-13-1", "joker-1"], tiles).valid).toBe(false);
-    expect(validateMeld(["joker-1", "joker-2", "joker-1"], tiles).valid).toBe(false);
+    expect(validateMeld(["wildcard-1", "coral-1-1", "coral-2-1"], tiles).valid).toBe(false);
+    expect(validateMeld(["coral-12-1", "coral-13-1", "wildcard-1"], tiles).valid).toBe(false);
+    expect(validateMeld(["wildcard-1", "wildcard-2", "wildcard-1"], tiles).valid).toBe(false);
   });
 });
 

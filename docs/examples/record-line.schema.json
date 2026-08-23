@@ -1,0 +1,968 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://snagsby.com/guppycube/schemas/record-line-v1",
+  "title": "guppycube record line",
+  "description": "One line of a guppycube-record/1 file: either a server event (chained, sequenced) or an annotation.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/serverEvent"
+    },
+    {
+      "$ref": "#/$defs/annotation"
+    }
+  ],
+  "$defs": {
+    "tileId": {
+      "type": "string",
+      "pattern": "^([csoi](1[0-3]|[1-9])|\\*)[ab]$",
+      "description": "Exact tile id: color letter (c s o i) + number + copy letter, or *a / *b for the wildcards."
+    },
+    "meld": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/tileId"
+      },
+      "minItems": 1,
+      "maxItems": 13
+    },
+    "board": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/meld"
+      },
+      "maxItems": 106
+    },
+    "seatId": {
+      "type": "string",
+      "pattern": "^p[1-4]$"
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "assistId": {
+      "enum": [
+        "no-move-alert",
+        "auto-draw",
+        "rack-meld-highlights"
+      ]
+    },
+    "assistPolicy": {
+      "enum": [
+        "default-on",
+        "default-off",
+        "disallowed"
+      ]
+    },
+    "serverEvent": {
+      "type": "object",
+      "required": [
+        "seq",
+        "at",
+        "type"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        }
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/gameEvent"
+        },
+        {
+          "$ref": "#/$defs/seatEvent"
+        },
+        {
+          "$ref": "#/$defs/assistEvent"
+        },
+        {
+          "$ref": "#/$defs/startEvent"
+        },
+        {
+          "$ref": "#/$defs/dealEvent"
+        },
+        {
+          "$ref": "#/$defs/turnEvent"
+        },
+        {
+          "$ref": "#/$defs/draftEvent"
+        },
+        {
+          "$ref": "#/$defs/endEvent"
+        },
+        {
+          "$ref": "#/$defs/revealEvent"
+        }
+      ]
+    },
+    "gameEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "format",
+        "record",
+        "game",
+        "rules",
+        "policy",
+        "engine"
+      ],
+      "properties": {
+        "seq": {
+          "const": 1
+        },
+        "at": true,
+        "prev": {
+          "type": "null"
+        },
+        "hash": true,
+        "type": {
+          "const": "game"
+        },
+        "format": {
+          "const": "guppycube-record/1"
+        },
+        "record": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "table",
+            "origin"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "table": {
+              "type": "string",
+              "pattern": "^[a-z]+-[a-z]+-[a-z]+$"
+            },
+            "origin": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        },
+        "game": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "maxSeats"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "realtime",
+                "correspondence"
+              ]
+            },
+            "maxSeats": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 4
+            }
+          }
+        },
+        "rules": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "colors",
+            "numbers",
+            "copies",
+            "wildcards",
+            "rackSize",
+            "openingMinimum",
+            "wildcardPenalty",
+            "turnMs"
+          ],
+          "properties": {
+            "colors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "numbers": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "copies": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "wildcards": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rackSize": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "openingMinimum": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "wildcardPenalty": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turnMs": {
+              "type": "integer",
+              "minimum": 1000
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "assists",
+            "reveal",
+            "retention",
+            "recordDrafts"
+          ],
+          "properties": {
+            "assists": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/assistPolicy"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/assistId"
+              }
+            },
+            "reveal": {
+              "enum": [
+                "full",
+                "final-racks",
+                "none"
+              ]
+            },
+            "retention": {
+              "enum": [
+                "minimal",
+                "keep"
+              ]
+            },
+            "recordDrafts": {
+              "type": "boolean"
+            }
+          }
+        },
+        "engine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rules",
+            "shuffle"
+          ],
+          "properties": {
+            "rules": {
+              "type": "string",
+              "pattern": "^[a-z0-9-]+/[0-9]+\\.[0-9]+\\.[0-9]+$"
+            },
+            "shuffle": {
+              "const": "fy-sha256/1"
+            }
+          }
+        }
+      }
+    },
+    "seatEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "player",
+        "host"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "seat"
+        },
+        "player": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "name",
+            "kind"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/seatId"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            "kind": {
+              "enum": [
+                "human",
+                "computer"
+              ]
+            },
+            "strategy": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            }
+          }
+        },
+        "host": {
+          "type": "boolean"
+        }
+      }
+    },
+    "assistEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "player",
+        "assist",
+        "enabled"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "assist"
+        },
+        "player": {
+          "$ref": "#/$defs/seatId"
+        },
+        "assist": {
+          "$ref": "#/$defs/assistId"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "startEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "order",
+        "shuffleCommit",
+        "dealt",
+        "pool"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "start"
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/seatId"
+          },
+          "minItems": 2,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "shuffleCommit": {
+          "$ref": "#/$defs/hash"
+        },
+        "dealt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pool": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 106
+        }
+      }
+    },
+    "dealEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "player",
+        "count"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "deal"
+        },
+        "player": {
+          "$ref": "#/$defs/seatId"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 106
+        },
+        "private": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rack"
+          ],
+          "properties": {
+            "rack": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileId"
+              },
+              "maxItems": 106
+            }
+          }
+        }
+      }
+    },
+    "turnEvent": {
+      "type": "object",
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "n",
+        "player",
+        "action",
+        "reason"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "turn"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "player": {
+          "$ref": "#/$defs/seatId"
+        },
+        "action": {
+          "enum": [
+            "play",
+            "draw"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "player",
+            "timeout",
+            "auto-draw"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": [
+            "board",
+            "played"
+          ],
+          "properties": {
+            "seq": true,
+            "at": true,
+            "prev": true,
+            "hash": true,
+            "type": true,
+            "n": true,
+            "player": true,
+            "reason": true,
+            "action": {
+              "const": "play"
+            },
+            "board": {
+              "$ref": "#/$defs/board"
+            },
+            "played": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/tileId"
+              },
+              "minItems": 1,
+              "maxItems": 106
+            },
+            "opening": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "points"
+              ],
+              "properties": {
+                "points": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "drew"
+          ],
+          "properties": {
+            "seq": true,
+            "at": true,
+            "prev": true,
+            "hash": true,
+            "type": true,
+            "n": true,
+            "player": true,
+            "reason": true,
+            "action": {
+              "const": "draw"
+            },
+            "drew": {
+              "enum": [
+                0,
+                1
+              ]
+            },
+            "private": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tile"
+              ],
+              "properties": {
+                "tile": {
+                  "$ref": "#/$defs/tileId"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "draftEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "n",
+        "player",
+        "board"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "draft"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "player": {
+          "$ref": "#/$defs/seatId"
+        },
+        "board": {
+          "$ref": "#/$defs/board"
+        }
+      }
+    },
+    "endEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "reason",
+        "winner",
+        "scores"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "end"
+        },
+        "reason": {
+          "enum": [
+            "out",
+            "blocked"
+          ]
+        },
+        "winner": {
+          "$ref": "#/$defs/seatId"
+        },
+        "scores": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/seatId"
+          },
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "racks": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/seatId"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/tileId"
+            },
+            "maxItems": 106
+          }
+        }
+      }
+    },
+    "revealEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "at",
+        "type",
+        "seed",
+        "algorithm",
+        "unlock"
+      ],
+      "properties": {
+        "seq": true,
+        "at": true,
+        "prev": true,
+        "hash": true,
+        "type": {
+          "const": "reveal"
+        },
+        "seed": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "algorithm": {
+          "const": "fy-sha256/1"
+        },
+        "unlock": {
+          "type": "object",
+          "description": "Private payloads keyed by the seq of the event they belong to.",
+          "propertyNames": {
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "additionalProperties": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "key": {
+          "type": "string",
+          "description": "Optional public key (multibase) when the annotation is signed."
+        },
+        "sig": {
+          "type": "string",
+          "description": "Optional signature over the canonical JSON of the annotation without sig."
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Turn number; 0 means the position right after the deal."
+        },
+        "line": {
+          "type": "string",
+          "description": "Id of a line event when the anchor is inside a variation."
+        },
+        "i": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Move index within that line."
+        }
+      }
+    },
+    "marks": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 2,
+      "items": {
+        "enum": [
+          "!",
+          "!!",
+          "?",
+          "??",
+          "!?",
+          "?!"
+        ]
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "required": [
+        "id",
+        "at",
+        "type",
+        "by"
+      ],
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "type": {
+              "const": "note"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "by": {
+              "$ref": "#/$defs/author"
+            },
+            "on": {
+              "$ref": "#/$defs/anchor"
+            },
+            "marks": {
+              "$ref": "#/$defs/marks"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "on",
+            "moves"
+          ],
+          "properties": {
+            "type": {
+              "const": "line"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "by": {
+              "$ref": "#/$defs/author"
+            },
+            "on": {
+              "$ref": "#/$defs/anchor"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "moves": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "player",
+                  "action"
+                ],
+                "properties": {
+                  "player": {
+                    "$ref": "#/$defs/seatId"
+                  },
+                  "action": {
+                    "enum": [
+                      "play",
+                      "draw"
+                    ]
+                  },
+                  "board": {
+                    "$ref": "#/$defs/board"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "facts"
+          ],
+          "properties": {
+            "type": {
+              "const": "eval"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "by": {
+              "$ref": "#/$defs/author"
+            },
+            "on": {
+              "$ref": "#/$defs/anchor"
+            },
+            "facts": {
+              "type": "object",
+              "description": "Machine-derived facts about the position after the anchored move. Well-known keys: rackValue, hadLegalMove, couldOpen, couldGoOut, maxPlayable, thinkMs.",
+              "properties": {
+                "rackValue": {
+                  "type": "object",
+                  "propertyNames": {
+                    "$ref": "#/$defs/seatId"
+                  },
+                  "additionalProperties": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "hadLegalMove": {
+                  "type": "boolean"
+                },
+                "couldOpen": {
+                  "type": "boolean"
+                },
+                "couldGoOut": {
+                  "type": "boolean"
+                },
+                "maxPlayable": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "thinkMs": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

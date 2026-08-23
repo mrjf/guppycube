@@ -18,8 +18,23 @@ interface Rect {
 
 interface MeldLayout {
   board: Rect;
-  melds: Rect[];
-  rows: Rect[][];
+  grid: Rect;
+  scale: number;
+  rowCount: number;
+  melds: Array<Rect & { row: number; tileIds: string[] }>;
+  rows: Array<Array<Rect & { row: number; tileIds: string[] }>>;
+  scrolling: {
+    bodyHeight: number;
+    bodyWidth: number;
+    documentHeight: number;
+    documentWidth: number;
+    gridHeight: number;
+    gridScrollHeight: number;
+    gridScrollWidth: number;
+    gridWidth: number;
+    viewportHeight: number;
+    viewportWidth: number;
+  };
 }
 
 async function getGameState(page: Page, roomCode: string): Promise<GameState> {
@@ -67,11 +82,23 @@ async function startTwoPlayerGame(page: Page, request: APIRequestContext): Promi
   await expect(page.getByText("Your turn", { exact: true })).toBeVisible();
 }
 
-async function addDraftMeld(page: Page): Promise<void> {
+async function addDraftMeld(page: Page, tileCount = 1): Promise<string[]> {
   const melds = page.locator(".melds .meld");
   const expectedCount = await melds.count() + 1;
-  await page.locator(".rack .tile").first().press("Alt+Enter");
+  const tileIds = await page.locator(".rack .tile").evaluateAll((tiles, count) =>
+    tiles.slice(0, count).map((tile) => (tile as HTMLElement).dataset.tileId ?? ""), tileCount);
+  expect(tileIds, `the rack should have ${tileCount} tiles available for the next meld`)
+    .toHaveLength(tileCount);
+  expect(tileIds).not.toContain("");
+  for (const tileId of tileIds) {
+    const tile = page.locator(`.rack .tile[data-tile-id="${tileId}"]`);
+    await tile.focus();
+    await tile.press("Space");
+  }
+  await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(tileCount);
+  await page.locator(`.rack .tile[data-tile-id="${tileIds.at(-1)}"]`).press("Alt+Enter");
   await expect(melds).toHaveCount(expectedCount);
+  return tileIds;
 }
 
 async function readMeldLayout(page: Page): Promise<MeldLayout> {
@@ -83,18 +110,60 @@ async function readMeldLayout(page: Page): Promise<MeldLayout> {
       return { x, y, width, height };
     }
 
-    const melds = [...document.querySelectorAll<HTMLElement>(".melds .meld")].map((meld) => {
+    const board = document.querySelector<HTMLElement>(".melds");
+    const grid = document.querySelector<HTMLElement>(".meld-grid");
+    if (!board || !grid) throw new Error("Missing the felt or meld grid");
+    const melds = [...grid.querySelectorAll<HTMLElement>(":scope > .meld")].map((meld) => {
       const { x, y, width, height } = meld.getBoundingClientRect();
-      return { x, y, width, height };
+      const row = Number.parseInt(meld.dataset.feltRow ?? "", 10);
+      if (!Number.isInteger(row)) throw new Error("Meld is missing its canonical felt row");
+      return {
+        x,
+        y,
+        width,
+        height,
+        row,
+        tileIds: [...meld.querySelectorAll<HTMLElement>(".tile")].map((tile) => tile.dataset.tileId ?? ""),
+      };
     });
-    const rows = melds.reduce<Rect[][]>((visualRows, meld) => {
-      const currentRow = visualRows.at(-1);
-      if (currentRow && Math.abs(currentRow[0]!.y - meld.y) <= 1) currentRow.push(meld);
-      else visualRows.push([meld]);
-      return visualRows;
-    }, []);
-    return { board: rect(".melds"), melds, rows };
+    const rowCount = Number.parseInt(grid.dataset.feltRows ?? "", 10);
+    const rows = Array.from({ length: rowCount }, (_, index) =>
+      melds.filter((meld) => meld.row === index + 1));
+    return {
+      board: rect(".melds"),
+      grid: rect(".meld-grid"),
+      scale: Number.parseFloat(grid.dataset.feltScale ?? ""),
+      rowCount,
+      melds,
+      rows,
+      scrolling: {
+        bodyHeight: document.body.scrollHeight,
+        bodyWidth: document.body.scrollWidth,
+        documentHeight: document.documentElement.scrollHeight,
+        documentWidth: document.documentElement.scrollWidth,
+        gridHeight: grid.clientHeight,
+        gridScrollHeight: grid.scrollHeight,
+        gridScrollWidth: grid.scrollWidth,
+        gridWidth: grid.clientWidth,
+        viewportHeight: window.innerHeight,
+        viewportWidth: document.documentElement.clientWidth,
+      },
+    };
   });
+}
+
+async function settleFeltLayout(page: Page): Promise<void> {
+  let previous = "";
+  await expect.poll(async () => {
+    const current = JSON.stringify(await page.locator(".meld-grid > .meld").evaluateAll((melds) =>
+      melds.map((meld) => {
+        const { x, y, width, height } = meld.getBoundingClientRect();
+        return { x, y, width, height };
+      })));
+    const stable = current === previous;
+    previous = current;
+    return stable;
+  }, { intervals: [100, 100, 100, 100, 100] }).toBe(true);
 }
 
 function contentBounds(rects: Rect[]): Rect {
@@ -105,17 +174,21 @@ function contentBounds(rects: Rect[]): Rect {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function expectCenteredAndContained({ board, melds }: MeldLayout): void {
+function expectCenteredAndContained({ board, grid, melds }: MeldLayout, requireCentering = true): void {
   const contents = contentBounds(melds);
   const boardCenterX = board.x + board.width / 2;
   const boardCenterY = board.y + board.height / 2;
   const contentsCenterX = contents.x + contents.width / 2;
   const contentsCenterY = contents.y + contents.height / 2;
+  const horizontalTolerance = centerTolerancePx + Math.abs(board.width - grid.width) / 2;
+  const verticalTolerance = centerTolerancePx + Math.abs(board.height - grid.height) / 2;
 
-  expect(Math.abs(contentsCenterX - boardCenterX), "melds should be horizontally centered on the board")
-    .toBeLessThanOrEqual(centerTolerancePx);
-  expect(Math.abs(contentsCenterY - boardCenterY), "melds should be vertically centered on the board")
-    .toBeLessThanOrEqual(centerTolerancePx);
+  if (requireCentering) {
+    expect(Math.abs(contentsCenterX - boardCenterX), "melds should be horizontally centered on the board")
+      .toBeLessThanOrEqual(horizontalTolerance);
+    expect(Math.abs(contentsCenterY - boardCenterY), "melds should be vertically centered on the board")
+      .toBeLessThanOrEqual(verticalTolerance);
+  }
 
   for (const [index, meld] of melds.entries()) {
     expect(meld.x, `meld ${index + 1} should not overflow the board's left edge`)
@@ -129,86 +202,124 @@ function expectCenteredAndContained({ board, melds }: MeldLayout): void {
   }
 }
 
-function expectRowsCentered(layout: MeldLayout, expectedRowLengths: number[]): void {
-  expect(layout.rows.map((row) => row.length)).toEqual(expectedRowLengths);
+function expectRowsCentered(layout: MeldLayout, expectedTileCounts: number[][]): void {
+  expect(layout.rows.map((row) => row.map((meld) => meld.tileIds.length))).toEqual(expectedTileCounts);
   const boardCenterX = layout.board.x + layout.board.width / 2;
+  const horizontalTolerance = centerTolerancePx + Math.abs(layout.board.width - layout.grid.width) / 2;
   for (const [index, row] of layout.rows.entries()) {
     const rowBounds = contentBounds(row);
     const rowCenterX = rowBounds.x + rowBounds.width / 2;
     expect(Math.abs(rowCenterX - boardCenterX), `row ${index + 1} should be horizontally centered`)
-      .toBeLessThanOrEqual(centerTolerancePx);
+      .toBeLessThanOrEqual(horizontalTolerance);
   }
 }
 
-test("grows melds outward from the center and fills the width before adding a fourth row", async ({ page, request }) => {
+function expectNoScrolling(layout: MeldLayout): void {
+  expect(layout.scrolling.documentWidth, "the document should not scroll horizontally")
+    .toBeLessThanOrEqual(layout.scrolling.viewportWidth);
+  expect(layout.scrolling.bodyWidth, "the body should not scroll horizontally")
+    .toBeLessThanOrEqual(layout.scrolling.viewportWidth);
+  expect(layout.scrolling.documentHeight, "the document should not scroll vertically")
+    .toBeLessThanOrEqual(layout.scrolling.viewportHeight);
+  expect(layout.scrolling.bodyHeight, "the body should not scroll vertically")
+    .toBeLessThanOrEqual(layout.scrolling.viewportHeight);
+  expect(layout.scrolling.gridScrollWidth, "the packed felt should not have horizontal overflow")
+    .toBeLessThanOrEqual(layout.scrolling.gridWidth + edgeTolerancePx);
+  expect(layout.scrolling.gridScrollHeight, "the packed felt should not have vertical overflow")
+    .toBeLessThanOrEqual(layout.scrolling.gridHeight + edgeTolerancePx);
+}
+
+async function expectTilesClearDrawPile(page: Page): Promise<void> {
+  const overlaps = await page.evaluate(() => {
+    const drawPile = document.querySelector<HTMLElement>(".pool-count");
+    if (!drawPile) throw new Error("Missing draw pile");
+    const pile = drawPile.getBoundingClientRect();
+    return [...document.querySelectorAll<HTMLElement>(".melds .tile")]
+      .map((tile) => {
+        const rect = tile.getBoundingClientRect();
+        return {
+          tileId: tile.dataset.tileId ?? "unknown tile",
+          overlaps: rect.left < pile.right && rect.right > pile.left
+            && rect.top < pile.bottom && rect.bottom > pile.top,
+        };
+      })
+      .filter((tile) => tile.overlaps)
+      .map((tile) => tile.tileId);
+  });
+  expect(overlaps, "draw pile should never cover an actual meld tile").toEqual([]);
+}
+
+function meldSignatures(layout: MeldLayout): string[] {
+  return layout.melds.map((meld) => meld.tileIds.join("|"));
+}
+
+test("uses a stable canonical order and best-fits complementary meld widths into fewer rows", async ({ page, request }) => {
+  test.setTimeout(30_000);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await startTwoPlayerGame(page, request);
+
+  for (const tileCount of [2, 5, 3, 4]) await addDraftMeld(page, tileCount);
+
+  await settleFeltLayout(page);
+  const wideLayout = await readMeldLayout(page);
+  expect(wideLayout.scale).toBe(1);
+  expect(wideLayout.rowCount).toBe(1);
+  expectRowsCentered(wideLayout, [[5, 4, 3, 2]]);
+  expectCenteredAndContained(wideLayout);
+  expectNoScrolling(wideLayout);
+  const canonicalSignatures = meldSignatures(wideLayout);
+
+  await page.reload();
+  await expect(page.getByLabel("Game table")).toBeVisible();
+  await expect(page.locator(".meld-grid")).toHaveAttribute("data-felt-rows", "1");
+  await settleFeltLayout(page);
+  expect(meldSignatures(await readMeldLayout(page)), "canonical display order should survive a reload")
+    .toEqual(canonicalSignatures);
+
+  await page.setViewportSize({ width: 520, height: 900 });
+  await expect(page.locator(".meld-grid")).toHaveAttribute("data-felt-rows", "2");
+  await settleFeltLayout(page);
+  const packedLayout = await readMeldLayout(page);
+  expect(packedLayout.scale, "full-size tiles should be retained while two rows fit").toBe(1);
+  expectRowsCentered(packedLayout, [[5, 2], [4, 3]]);
+  expectCenteredAndContained(packedLayout);
+  expectNoScrolling(packedLayout);
+});
+
+test("shrinks a worst-case-like draft to prevent board or document scrolling", async ({ page, request }) => {
   test.setTimeout(30_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await startTwoPlayerGame(page, request);
 
-  const expectedRowsByMeldCount = [
-    [1],
-    [2],
-    [2, 1],
-    [2, 2],
-    [3, 2],
-    [3, 3],
-    [3, 3, 1],
-    [3, 3, 2],
-    [3, 3, 3],
-  ];
+  for (let meldCount = 0; meldCount < 14; meldCount += 1) await addDraftMeld(page);
+  await settleFeltLayout(page);
+  const roomyLayout = await readMeldLayout(page);
+  expect(roomyLayout.melds).toHaveLength(14);
+  expect(roomyLayout.scale).toBe(1);
+  expectCenteredAndContained(roomyLayout);
+  expectNoScrolling(roomyLayout);
+  await expectTilesClearDrawPile(page);
+  const roomyTileWidth = roomyLayout.melds[0]!.width;
 
-  for (const [index, expectedRows] of expectedRowsByMeldCount.entries()) {
-    await addDraftMeld(page);
-    const layout = await readMeldLayout(page);
-    expect(layout.melds).toHaveLength(index + 1);
-    expectCenteredAndContained(layout);
-    expectRowsCentered(layout, expectedRows);
-  }
+  await page.setViewportSize({ width: 360, height: 650 });
+  await expect.poll(async () => Number(await page.locator(".meld-grid").getAttribute("data-felt-scale")))
+    .toBeLessThan(1);
+  await settleFeltLayout(page);
+  const constrainedLayout = await readMeldLayout(page);
+  expect(constrainedLayout.melds).toHaveLength(14);
+  expect(constrainedLayout.scale, "the engine should reduce tile scale before introducing scrolling")
+    .toBeLessThan(1);
+  expect(constrainedLayout.melds[0]!.width, "rendered melds should actually shrink with the scale")
+    .toBeLessThan(roomyTileWidth);
+  expect(constrainedLayout.rowCount, "the constrained layout should still avoid excessive rows")
+    .toBeLessThanOrEqual(4);
+  expectCenteredAndContained(constrainedLayout, false);
+  expectNoScrolling(constrainedLayout);
+  await expectTilesClearDrawPile(page);
 
-  const threeRowLayout = await readMeldLayout(page);
-  expect(threeRowLayout.rows).toHaveLength(3);
-  const boardMetrics = await page.locator(".melds").evaluate((board) => ({
-    clientHeight: board.clientHeight,
-    scrollHeight: board.scrollHeight,
-  }));
-  expect(boardMetrics.scrollHeight, "three rows of melds should fit without vertical scrolling")
-    .toBeLessThanOrEqual(boardMetrics.clientHeight + edgeTolerancePx);
-
-  for (let meldCount = 10; meldCount <= 13; meldCount += 1) await addDraftMeld(page);
-  const widthFillingLayout = await readMeldLayout(page);
-  expect(widthFillingLayout.melds).toHaveLength(13);
-  expect(widthFillingLayout.rows.length, "available width should be used before a fourth row is added")
-    .toBeLessThanOrEqual(3);
-  expectCenteredAndContained(widthFillingLayout);
-  await expect(page.locator(".meld-grid")).toHaveClass(/\bfills-width\b/);
-});
-
-test("centers melds and reflows them without horizontal overflow at a narrow width", async ({ page, request }) => {
-  test.setTimeout(30_000);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await startTwoPlayerGame(page, request);
-
-  await addDraftMeld(page);
-  const firstLayout = await readMeldLayout(page);
-  expect(firstLayout.melds).toHaveLength(1);
-  expectCenteredAndContained(firstLayout);
-
-  await addDraftMeld(page);
-  const secondLayout = await readMeldLayout(page);
-  expect(secondLayout.melds).toHaveLength(2);
-  expectCenteredAndContained(secondLayout);
-  expect(secondLayout.melds[0]!.y, "the existing meld should shift up when a new meld needs room")
-    .toBeLessThan(firstLayout.melds[0]!.y - 1);
-  expect(secondLayout.melds[1]!.y, "narrow melds should reflow to a new row")
-    .toBeGreaterThan(secondLayout.melds[0]!.y + secondLayout.melds[0]!.height);
-
-  const overflow = await page.evaluate(() => ({
-    viewportWidth: document.documentElement.clientWidth,
-    documentWidth: document.documentElement.scrollWidth,
-    bodyWidth: document.body.scrollWidth,
-  }));
-  expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth);
-  expect(overflow.bodyWidth).toBeLessThanOrEqual(overflow.viewportWidth);
+  await page.evaluate(() => window.scrollTo({ left: 10_000, top: 10_000 }));
+  expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY })))
+    .toEqual({ x: 0, y: 0 });
 });
 
 test("keeps idle meld chrome invisible and reveals it without moving the melds", async ({ page, request }) => {
@@ -216,6 +327,8 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
   await startTwoPlayerGame(page, request);
   await addDraftMeld(page);
   await addDraftMeld(page);
+  await settleFeltLayout(page);
+  await expect(page.locator(".melds .tile.is-new-activity")).toHaveCount(0);
 
   const melds = page.locator(".melds .meld");
   const meld = melds.first();
@@ -259,6 +372,7 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
       backgroundColor: meldStyle.backgroundColor,
       backgroundImage: meldStyle.backgroundImage,
       boxShadow: meldStyle.boxShadow,
+      invalid: firstMeld.classList.contains("is-invalid"),
       handleOpacity: Number.parseFloat(handleStyle.opacity),
       handlePointerEvents: handleStyle.pointerEvents,
       handleWidth: handleBounds.width,
@@ -280,12 +394,19 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
   });
   expect(restingChrome.borderWidths, "a resting meld should have no border on any side")
     .toEqual([0, 0, 0, 0]);
-  expect(restingChrome.backgroundColor, "a resting meld should have a transparent background")
-    .toBe("rgba(0, 0, 0, 0)");
+  if (restingChrome.invalid) {
+    expect(restingChrome.backgroundColor, "an unfinished meld should retain its validation signal")
+      .not.toBe("rgba(0, 0, 0, 0)");
+    expect(restingChrome.boxShadow).not.toBe("none");
+  } else {
+    expect(restingChrome.backgroundColor, "a valid resting meld should have a transparent background")
+      .toBe("rgba(0, 0, 0, 0)");
+    expect(restingChrome.boxShadow).toBe("none");
+  }
   expect(restingChrome.backgroundImage).toBe("none");
-  expect(restingChrome.boxShadow).toBe("none");
   expect(restingChrome.numberVisible, "the meld number should never be visible").toBe(false);
-  expect(restingChrome.statusVisible, "the meld status should never be visible").toBe(false);
+  expect(restingChrome.statusVisible, "only unfinished melds should expose a resting validation status")
+    .toBe(restingChrome.invalid);
   expect(restingChrome.handleOpacity, "the mouse handle should be hidden while the meld is idle").toBe(0);
   expect(restingChrome.handlePointerEvents).toBe("none");
   expect(restingChrome.handleWidth).toBeLessThanOrEqual(18);
@@ -333,7 +454,8 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
   expect(hoveredChrome.backgroundColor, "hover should reveal the meld background")
     .not.toBe("rgba(0, 0, 0, 0)");
   expect(hoveredChrome.numberVisible, "hover should not restore the removed meld number").toBe(false);
-  expect(hoveredChrome.statusVisible, "hover should not restore the removed meld status").toBe(false);
+  expect(hoveredChrome.statusVisible, "hover should not change validation-status visibility")
+    .toBe(restingChrome.invalid);
   expect(hoveredChrome.meldRects, "hover must not change any meld's position or size")
     .toEqual(restingChrome.meldRects);
   expect(hoveredChrome.tileRects, "hover must not move the tiles within the meld")

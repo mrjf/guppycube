@@ -2,7 +2,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from "@pla
 
 const appUrl = (process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173").replace(/\/+$/, "");
 
-type AssistId = "no-move-alert" | "auto-draw";
+type AssistId = "no-move-alert" | "auto-draw" | "rack-meld-highlights";
 type AssistPolicy = "default-on" | "default-off" | "disallowed";
 type AssistPolicyMap = Record<AssistId, AssistPolicy>;
 
@@ -19,7 +19,7 @@ interface AssistGameState {
     id: string;
     color: "coral" | "sun" | "ocean" | "ink" | null;
     value: number | null;
-    joker: boolean;
+    wildcard: boolean;
   }>;
   assistPolicy: AssistPolicyMap;
   enabledAssists: AssistId[];
@@ -53,7 +53,7 @@ interface ClassifiedGame {
 function describeRack(state: AssistGameState): string {
   return state.myRack.map((id) => {
     const tile = state.tiles[id];
-    return tile?.joker ? `${id}(joker)` : `${id}(${tile?.color}-${tile?.value})`;
+    return tile?.wildcard ? `${id}(wildcard)` : `${id}(${tile?.color}-${tile?.value})`;
   }).join(", ");
 }
 
@@ -68,7 +68,7 @@ function openingMoveProof(state: AssistGameState): OpeningMoveProof {
 
   const meldPoints = (tileIds: string[]): number | null => {
     const selected = tileIds.map((id) => state.tiles[id]);
-    const numbered = selected.filter((tile) => tile && !tile.joker);
+    const numbered = selected.filter((tile) => tile && !tile.wildcard);
     if (numbered.length === 0) return null;
 
     let groupPoints: number | null = null;
@@ -194,14 +194,21 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
 
   const noMovePolicy = page.getByLabel("No-move alert policy");
   const autoDrawPolicy = page.getByLabel("Auto-draw policy");
+  const rackMeldHighlightsPolicy = page.getByLabel("Rack meld highlights policy");
   await expect(noMovePolicy).toHaveValue("default-on");
   await expect(autoDrawPolicy).toHaveValue("default-off");
+  await expect(rackMeldHighlightsPolicy).toHaveValue("default-off");
   await expect(noMovePolicy.locator("option")).toHaveText([
     "Allowed, on by default",
     "Allowed, off by default",
     "Disallowed",
   ]);
   await expect(autoDrawPolicy.locator("option")).toHaveText([
+    "Allowed, on by default",
+    "Allowed, off by default",
+    "Disallowed",
+  ]);
+  await expect(rackMeldHighlightsPolicy.locator("option")).toHaveText([
     "Allowed, on by default",
     "Allowed, off by default",
     "Disallowed",
@@ -222,6 +229,7 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
     assistPolicy: {
       "no-move-alert": "default-off",
       "auto-draw": "disallowed",
+      "rack-meld-highlights": "default-off",
     },
   });
 
@@ -229,6 +237,7 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
   const roomCode = await page.locator(".invite-code strong").innerText();
   const controls = page.locator('section[aria-label="Your assists"]');
   await expect(controls.getByRole("switch", { name: "No-move alert" })).not.toBeChecked();
+  await expect(controls.getByRole("switch", { name: "Rack meld highlights" })).not.toBeChecked();
   await expect(controls.getByRole("switch", { name: "Auto-draw" })).toHaveCount(0);
   await expect(controls.getByText("Not allowed", { exact: true })).toBeVisible();
 
@@ -236,6 +245,7 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
   expect(state.assistPolicy).toEqual({
     "no-move-alert": "default-off",
     "auto-draw": "disallowed",
+    "rack-meld-highlights": "default-off",
   });
   expect(state.enabledAssists).toEqual([]);
 
@@ -262,6 +272,7 @@ test("keeps each player's assist toggles independent in the lobby and active gam
   const game = await createTwoPlayerGame(browser, {
     "no-move-alert": "default-off",
     "auto-draw": "default-off",
+    "rack-meld-highlights": "default-off",
   }, Date.now().toString(36).slice(-7));
 
   try {
@@ -326,6 +337,7 @@ test("matches live opening game states and only auto-draws the truly blocked tur
       const game = await createTwoPlayerGame(browser, {
         "no-move-alert": "default-on",
         "auto-draw": "default-off",
+        "rack-meld-highlights": "default-off",
       }, `S${attempt}-${Date.now().toString(36).slice(-5)}`);
       const startResponse = await game.hostContext.request.post(`${appUrl}/api/games/${game.roomCode}/start`, {
         data: {},

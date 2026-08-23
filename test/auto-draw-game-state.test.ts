@@ -90,8 +90,8 @@ const scenarios: PlayingStateScenario[] = [
     shouldAutoDraw: false,
   },
   {
-    name: "does not auto-draw when a table joker can be replaced and replayed",
-    board: [meld("joker-run", ["ocean-7-1", "joker-1", "ocean-9-1"])],
+    name: "does not auto-draw when a table wildcard can be replaced and replayed",
+    board: [meld("wildcard-run", ["ocean-7-1", "wildcard-1", "ocean-9-1"])],
     rack: ["ocean-8-1", "coral-5-1", "sun-5-1"],
     opened: true,
     shouldAutoDraw: false,

@@ -38,6 +38,7 @@ async function createPlayingGame(browser: Browser, suffix: string): Promise<Play
   const guestContext = await browser.newContext();
   try {
     const createResponse = await hostContext.request.post(`${appUrl}/api/games`, {
+      headers: { "X-Guppycube-Turn-Duration-Ms": "15000" },
       data: {
         name: `Host ${suffix}`,
         mode: "realtime",
@@ -45,6 +46,7 @@ async function createPlayingGame(browser: Browser, suffix: string): Promise<Play
         assistPolicy: {
           "no-move-alert": "disallowed",
           "auto-draw": "disallowed",
+          "rack-meld-highlights": "disallowed",
         },
       },
     });
@@ -105,8 +107,8 @@ async function waitForTurnEnd(
 function orderedMeld(tileIds: string[], tiles: Record<string, Tile>): { tileIds: string[]; points: number } | null {
   const selected = tileIds.map((id) => tiles[id]);
   if (selected.some((tile) => !tile)) return null;
-  const numbered = selected.filter((tile): tile is Tile => Boolean(tile && !tile.joker));
-  const jokers = selected.filter((tile): tile is Tile => Boolean(tile?.joker));
+  const numbered = selected.filter((tile): tile is Tile => Boolean(tile && !tile.wildcard));
+  const wildcards = selected.filter((tile): tile is Tile => Boolean(tile?.wildcard));
   if (numbered.length === 0) return null;
 
   if (selected.length === 3 || selected.length === 4) {
@@ -144,11 +146,11 @@ function orderedMeld(tileIds: string[], tiles: Record<string, Tile>): { tileIds:
       ordered[index] = tile.id;
     }
     if (!fits) continue;
-    const availableJokers = [...jokers];
+    const availableWildcards = [...wildcards];
     for (let index = 0; index < ordered.length; index += 1) {
-      if (!ordered[index]) ordered[index] = availableJokers.shift()?.id;
+      if (!ordered[index]) ordered[index] = availableWildcards.shift()?.id;
     }
-    if (ordered.some((id) => !id) || availableJokers.length > 0) continue;
+    if (ordered.some((id) => !id) || availableWildcards.length > 0) continue;
     const end = start + selected.length - 1;
     return {
       tileIds: ordered as string[],

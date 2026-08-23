@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createRackLayout,
+  MANUAL_RACK_SLOTS_PER_ROW,
   parseRackLayout,
   placeRackTilesAtSlot,
   rackSlotIndex,
@@ -61,6 +62,20 @@ describe("rack layout", () => {
 
     expect(expanded.slotsPerRow).toBe(8);
     expect(expanded.slots[rackSlotIndex(1, 6)]).toBe("a");
+  });
+
+  it("expands manual racks with landing spots across both rows", () => {
+    const compact = createRackLayout(Array.from({ length: 14 }, (_, index) => `tile-${index + 1}`));
+    const manual = reconcileRackLayout(
+      compact,
+      rackTileIds(compact),
+      MANUAL_RACK_SLOTS_PER_ROW,
+    );
+
+    expect(manual.slotsPerRow).toBe(14);
+    expect(rackSlotRows(manual).every((row) => row.length === 14)).toBe(true);
+    expect(rackTileIds(manual)).toEqual(rackTileIds(compact));
+    expect(manual.slots[rackSlotIndex(1, 13)]).toBeNull();
   });
 
   it("only accepts valid persisted layouts", () => {

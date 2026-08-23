@@ -49,6 +49,51 @@ describe("GameRoom", () => {
     expect(drawer?.rackCount).toBe(15);
   });
 
+  it("upgrades persisted wildcard tiles from the former representation", async () => {
+    const roomCode = `W${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
+    const hostToken = "host-wildcard-upgrade-token";
+    const guestToken = "guest-wildcard-upgrade-token";
+    const room = env.GAME_ROOMS.getByName(roomCode);
+
+    expect(await room.create(
+      roomCode,
+      { name: "Ada", mode: "realtime", maxPlayers: 2 },
+      "host",
+      await hashToken(hostToken),
+    )).toEqual({ ok: true });
+    expect(await room.join("Grace", "guest", await hashToken(guestToken))).toEqual({ ok: true });
+
+    await runInDurableObject(room, (_instance, state) => {
+      const row = state.storage.sql.exec<{ json: string }>(
+        "SELECT json FROM game_state WHERE singleton = 1",
+      ).one();
+      const stored = JSON.parse(row.json) as Record<string, unknown>;
+      const tiles = stored.tiles as Record<string, { id: string; wildcard: boolean; [key: string]: unknown }>;
+      stored.tiles = Object.fromEntries(Object.entries(tiles).map(([id, tile]) => {
+        const legacyId = id.replace(/^wildcard-/, "joker-");
+        const { wildcard, ...legacyTile } = tile;
+        return [legacyId, { ...legacyTile, id: legacyId, joker: wildcard }];
+      }));
+      stored.pool = (stored.pool as string[]).map((id) => id.replace(/^wildcard-/, "joker-"));
+      state.storage.sql.exec(
+        "UPDATE game_state SET json = ?, updated_at = ? WHERE singleton = 1",
+        JSON.stringify(stored),
+        Date.now(),
+      );
+    });
+    await evictDurableObject(room);
+
+    expect(await room.start("host", hostToken)).toEqual({ ok: true });
+    const view = await room.getPublicState("host", hostToken);
+    expect(view.tiles["wildcard-1"]).toEqual({
+      id: "wildcard-1", color: null, value: null, wildcard: true,
+    });
+    expect(view.tiles["wildcard-2"]).toEqual({
+      id: "wildcard-2", color: null, value: null, wildcard: true,
+    });
+    expect(view.tiles).not.toHaveProperty("joker-1");
+  });
+
   it("commits a qualifying opening plus table extension as one atomic state transition", async () => {
     const roomCode = `O${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
     const hostToken = "host-opening-extension-token";
@@ -196,6 +241,7 @@ describe("GameRoom", () => {
         assistPolicy: {
           "no-move-alert": "default-off",
           "auto-draw": "disallowed",
+          "rack-meld-highlights": "default-off",
         },
       },
       "host",
@@ -206,6 +252,7 @@ describe("GameRoom", () => {
     expect(initial.assistPolicy).toEqual({
       "no-move-alert": "default-off",
       "auto-draw": "disallowed",
+      "rack-meld-highlights": "default-off",
     });
     expect(initial.enabledAssists).toEqual([]);
     expect(await room.setAssist("host", hostToken, "no-move-alert", true)).toEqual({ ok: true });

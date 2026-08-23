@@ -1,9 +1,16 @@
 import type { Meld, Tile, TileColor } from "./types";
-import { TILE_COLORS } from "./types";
+import {
+  TILE_COLORS,
+  TILE_COPIES_PER_NUMBER_AND_COLOR,
+  TILE_NUMBER_MAX,
+  TILE_NUMBER_MIN,
+  TILE_SET_SIZE,
+  WILDCARD_TILE_COUNT,
+} from "./types";
 
 export const INITIAL_RACK_SIZE = 14;
 export const INITIAL_MELD_MINIMUM = 30;
-export const JOKER_PENALTY = 30;
+export const WILDCARD_PENALTY = 30;
 export const REALTIME_TURN_MS = 2 * 60 * 1000;
 export const CORRESPONDENCE_TURN_MS = 72 * 60 * 60 * 1000;
 
@@ -23,7 +30,7 @@ export interface TurnValidation {
   openingPoints: number;
 }
 
-export interface JokerAssignment {
+export interface WildcardAssignment {
   value: number;
   color: TileColor | null;
   possibleColors: TileColor[];
@@ -53,16 +60,18 @@ export function createTileSet(): Record<string, Tile> {
   const tiles: Record<string, Tile> = {};
 
   for (const color of TILE_COLORS) {
-    for (let copy = 1; copy <= 2; copy += 1) {
-      for (let value = 1; value <= 13; value += 1) {
+    for (let copy = 1; copy <= TILE_COPIES_PER_NUMBER_AND_COLOR; copy += 1) {
+      for (let value = TILE_NUMBER_MIN; value <= TILE_NUMBER_MAX; value += 1) {
         const id = `${color}-${value}-${copy}`;
-        tiles[id] = { id, color, value, joker: false };
+        tiles[id] = { id, color, value, wildcard: false };
       }
     }
   }
 
-  tiles["joker-1"] = { id: "joker-1", color: null, value: null, joker: true };
-  tiles["joker-2"] = { id: "joker-2", color: null, value: null, joker: true };
+  for (let index = 1; index <= WILDCARD_TILE_COUNT; index += 1) {
+    const id = `wildcard-${index}`;
+    tiles[id] = { id, color: null, value: null, wildcard: true };
+  }
   return tiles;
 }
 
@@ -75,7 +84,7 @@ function validateGroup(tiles: Tile[]): MeldValidation {
     return invalid("A group must contain three or four tiles.");
   }
 
-  const numbered = tiles.filter((tile) => !tile.joker);
+  const numbered = tiles.filter((tile) => !tile.wildcard);
   if (numbered.length === 0) return invalid("A meld needs at least one numbered tile.");
 
   const value = numbered[0]?.value;
@@ -94,11 +103,11 @@ function validateGroup(tiles: Tile[]): MeldValidation {
 
 function validateRun(tiles: Tile[]): MeldValidation {
   if (tiles.length < 3) return invalid("A run must contain at least three tiles.");
-  if (tiles.length > 13) return invalid("A run cannot be longer than 13 tiles.");
+  if (tiles.length > TILE_NUMBER_MAX) return invalid(`A run cannot be longer than ${TILE_NUMBER_MAX} tiles.`);
 
   const numbered = tiles
     .map((tile, index) => ({ tile, index }))
-    .filter(({ tile }) => !tile.joker);
+    .filter(({ tile }) => !tile.wildcard);
   if (numbered.length === 0) return invalid("A meld needs at least one numbered tile.");
 
   const color = numbered[0]?.tile.color;
@@ -109,13 +118,13 @@ function validateRun(tiles: Tile[]): MeldValidation {
   const first = numbered[0];
   if (!first || first.tile.value === null) return invalid("This run has no starting number.");
   const start = first.tile.value - first.index;
-  if (start < 1 || start + tiles.length - 1 > 13) {
-    return invalid("Runs cannot wrap below 1 or above 13.");
+  if (start < TILE_NUMBER_MIN || start + tiles.length - 1 > TILE_NUMBER_MAX) {
+    return invalid(`Runs cannot wrap below ${TILE_NUMBER_MIN} or above ${TILE_NUMBER_MAX}.`);
   }
 
   for (const { tile, index } of numbered) {
     if (tile.value !== start + index) {
-      return invalid("Run tiles must be in consecutive order; jokers stand in a specific position.");
+      return invalid("Run tiles must be in consecutive order; wildcards stand in a specific position.");
     }
   }
 
@@ -139,30 +148,30 @@ export function validateMeld(tileIds: string[], tileMap: Record<string, Tile>): 
 }
 
 /**
- * Resolves what each joker represents in a completed meld.
- * Runs always have one exact color/value per position. A joker in a group of
+ * Resolves what each wildcard represents in a completed meld.
+ * Runs always have one exact color/value per position. A wildcard in a group of
  * three may legally be replaced by either missing color, so both are retained.
  */
-export function resolveJokerAssignments(
+export function resolveWildcardAssignments(
   tileIds: string[],
   tileMap: Record<string, Tile>,
-): Record<string, JokerAssignment> {
+): Record<string, WildcardAssignment> {
   const validation = validateMeld(tileIds, tileMap);
-  if (!validation.valid || !tileIds.some((id) => tileMap[id]?.joker)) return {};
+  if (!validation.valid || !tileIds.some((id) => tileMap[id]?.wildcard)) return {};
 
   const numbered = tileIds
     .map((id, index) => ({ tile: tileMap[id], index }))
-    .filter((entry): entry is { tile: Tile; index: number } => Boolean(entry.tile && !entry.tile.joker));
+    .filter((entry): entry is { tile: Tile; index: number } => Boolean(entry.tile && !entry.tile.wildcard));
   const first = numbered[0];
   if (!first || first.tile.value === null) return {};
 
-  const assignments: Record<string, JokerAssignment> = {};
+  const assignments: Record<string, WildcardAssignment> = {};
   if (validation.kind === "run") {
     if (!first.tile.color) return {};
     const start = first.tile.value - first.index;
     for (let index = 0; index < tileIds.length; index += 1) {
       const id = tileIds[index];
-      if (id && tileMap[id]?.joker) {
+      if (id && tileMap[id]?.wildcard) {
         assignments[id] = {
           value: start + index,
           color: first.tile.color,
@@ -176,7 +185,7 @@ export function resolveJokerAssignments(
   const usedColors = new Set(numbered.map(({ tile }) => tile.color));
   const possibleColors = TILE_COLORS.filter((color) => !usedColors.has(color));
   for (const id of tileIds) {
-    if (tileMap[id]?.joker) {
+    if (tileMap[id]?.wildcard) {
       assignments[id] = {
         value: first.tile.value,
         color: possibleColors.length === 1 ? possibleColors[0]! : null,
@@ -199,22 +208,22 @@ export function validateTurn(params: {
   tiles: Record<string, Tile>;
 }): TurnValidation {
   const { previousBoard, proposedBoard, rack, opened, tiles } = params;
-  if (proposedBoard.length > 106) {
+  if (proposedBoard.length > TILE_SET_SIZE) {
     return { valid: false, reason: "The table contains too many melds.", playedTileIds: [], openingPoints: 0 };
   }
 
   const previousIds = previousBoard.flatMap((meld) => meld.tileIds);
   const proposedIds = proposedBoard.flatMap((meld) => meld.tileIds);
-  if (proposedIds.length > 106 || hasDuplicate(proposedIds)) {
+  if (proposedIds.length > TILE_SET_SIZE || hasDuplicate(proposedIds)) {
     return { valid: false, reason: "Every tile can appear only once on the table.", playedTileIds: [], openingPoints: 0 };
   }
 
   const proposedSet = new Set(proposedIds);
   const missingPreviousIds = previousIds.filter((id) => !proposedSet.has(id));
-  if (missingPreviousIds.some((id) => tiles[id]?.joker)) {
+  if (missingPreviousIds.some((id) => tiles[id]?.wildcard)) {
     return {
       valid: false,
-      reason: "A retrieved joker must be played in another valid meld during the same turn.",
+      reason: "A retrieved wildcard must be played in another valid meld during the same turn.",
       playedTileIds: [],
       openingPoints: 0,
     };
@@ -276,7 +285,7 @@ function collectLegalMelds(
   options: MeldCollectionOptions = {},
 ): Array<{ tileIds: string[]; points: number }> {
   const available = new Set(availableTileIds);
-  const jokers = availableTileIds.filter((tileId) => tiles[tileId]?.joker);
+  const wildcards = availableTileIds.filter((tileId) => tiles[tileId]?.wildcard);
   const candidates = new Map<string, { tileIds: string[]; points: number }>();
 
   const add = (tileIds: string[]) => {
@@ -291,12 +300,12 @@ function collectLegalMelds(
     }
   };
 
-  for (let value = 1; value <= 13; value += 1) {
+  for (let value = TILE_NUMBER_MIN; value <= TILE_NUMBER_MAX; value += 1) {
     const matching = availableTileIds.filter((tileId) => {
       const tile = tiles[tileId];
-      return tile && !tile.joker && tile.value === value;
+      return tile && !tile.wildcard && tile.value === value;
     });
-    const choices = [...matching, ...jokers];
+    const choices = [...matching, ...wildcards];
     if (options.mustIncludeOneOf && !choices.some((tileId) => options.mustIncludeOneOf!.has(tileId))) continue;
     for (const size of [3, 4]) {
       const choose = (start: number, selected: string[]) => {
@@ -319,37 +328,37 @@ function collectLegalMelds(
     const numberedByValue = new Map<number, string[]>();
     for (const tileId of availableTileIds) {
       const tile = tiles[tileId];
-      if (!tile || tile.joker || tile.color !== color || tile.value === null) continue;
+      if (!tile || tile.wildcard || tile.color !== color || tile.value === null) continue;
       const matching = numberedByValue.get(tile.value) ?? [];
       matching.push(tileId);
       numberedByValue.set(tile.value, matching);
     }
 
-    for (let start = 1; start <= 11; start += 1) {
-      for (let end = start + 2; end <= 13; end += 1) {
+    for (let start = TILE_NUMBER_MIN; start <= TILE_NUMBER_MAX - 2; start += 1) {
+      for (let end = start + 2; end <= TILE_NUMBER_MAX; end += 1) {
         if (options.mustIncludeOneOf) {
-          const requiredJokerAvailable = jokers.some((tileId) => options.mustIncludeOneOf!.has(tileId));
+          const requiredWildcardAvailable = wildcards.some((tileId) => options.mustIncludeOneOf!.has(tileId));
           const requiredNumberAvailable = Array.from(numberedByValue.entries()).some(([value, tileIds]) =>
             value >= start
             && value <= end
             && tileIds.some((tileId) => options.mustIncludeOneOf!.has(tileId)),
           );
-          if (!requiredJokerAvailable && !requiredNumberAvailable) continue;
+          if (!requiredWildcardAvailable && !requiredNumberAvailable) continue;
         }
-        const build = (value: number, selected: string[], usedJokers: Set<string>) => {
+        const build = (value: number, selected: string[], usedWildcards: Set<string>) => {
           if (options.stopAfterFirst && candidates.size > 0) return;
           if (value > end) {
             add(selected);
             return;
           }
           for (const tileId of numberedByValue.get(value) ?? []) {
-            build(value + 1, [...selected, tileId], usedJokers);
+            build(value + 1, [...selected, tileId], usedWildcards);
           }
-          for (const jokerId of jokers) {
-            if (usedJokers.has(jokerId)) continue;
-            const nextJokers = new Set(usedJokers);
-            nextJokers.add(jokerId);
-            build(value + 1, [...selected, jokerId], nextJokers);
+          for (const wildcardId of wildcards) {
+            if (usedWildcards.has(wildcardId)) continue;
+            const nextWildcards = new Set(usedWildcards);
+            nextWildcards.add(wildcardId);
+            build(value + 1, [...selected, wildcardId], nextWildcards);
           }
         };
         build(start, [], new Set());
@@ -451,7 +460,7 @@ export function hasLegalMove(params: LegalMoveParams): boolean {
   });
   const candidatesByTableBit = new Map<bigint, MeldCandidate[]>();
   for (const candidate of orderedCandidates) {
-    for (let bitIndex = 0; bitIndex < 106; bitIndex += 1) {
+    for (let bitIndex = 0; bitIndex < TILE_SET_SIZE; bitIndex += 1) {
       const bit = 1n << BigInt(bitIndex);
       if ((candidate.tableMask & bit) === 0n) continue;
       const matching = candidatesByTableBit.get(bit) ?? [];
@@ -471,7 +480,7 @@ export function hasLegalMove(params: LegalMoveParams): boolean {
     if (failed.has(cacheKey)) return false;
 
     let bestOptions: MeldCandidate[] | null = null;
-    for (let bitIndex = 0; bitIndex < 106; bitIndex += 1) {
+    for (let bitIndex = 0; bitIndex < TILE_SET_SIZE; bitIndex += 1) {
       const bit = 1n << BigInt(bitIndex);
       if ((allTableMask & bit) === 0n || (coveredTableMask & bit) !== 0n) continue;
       const options = (candidatesByTableBit.get(bit) ?? []).filter(
@@ -501,10 +510,13 @@ export function rackPenalty(rack: string[], tiles: Record<string, Tile>): number
   return rack.reduce((sum, id) => {
     const tile = tiles[id];
     if (!tile) return sum;
-    return sum + (tile.joker ? JOKER_PENALTY : (tile.value ?? 0));
+    return sum + (tile.wildcard ? WILDCARD_PENALTY : (tile.value ?? 0));
   }, 0);
 }
 
-export function turnDuration(mode: "realtime" | "correspondence"): number {
-  return mode === "realtime" ? REALTIME_TURN_MS : CORRESPONDENCE_TURN_MS;
+export function turnDuration(
+  mode: "realtime" | "correspondence",
+  realtimeDurationMs = REALTIME_TURN_MS,
+): number {
+  return mode === "realtime" ? realtimeDurationMs : CORRESPONDENCE_TURN_MS;
 }

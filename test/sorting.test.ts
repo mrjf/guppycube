@@ -12,18 +12,18 @@ const tiles = createTileSet();
 describe("standard tile sorting", () => {
   it("sorts by the fixed color order and then number", () => {
     expect(sortTileIds(
-      ["ink-2-1", "coral-9-1", "sun-4-1", "coral-3-1", "joker-1"],
+      ["ink-2-1", "coral-9-1", "sun-4-1", "coral-3-1", "wildcard-1"],
       tiles,
       "color-first",
-    )).toEqual(["coral-3-1", "coral-9-1", "sun-4-1", "ink-2-1", "joker-1"]);
+    )).toEqual(["coral-3-1", "coral-9-1", "sun-4-1", "ink-2-1", "wildcard-1"]);
   });
 
   it("sorts by number and then the same fixed color order", () => {
     expect(sortTileIds(
-      ["ink-2-1", "ocean-1-1", "coral-2-1", "sun-1-1", "joker-1"],
+      ["ink-2-1", "ocean-1-1", "coral-2-1", "sun-1-1", "wildcard-1"],
       tiles,
       "number-first",
-    )).toEqual(["sun-1-1", "ocean-1-1", "coral-2-1", "ink-2-1", "joker-1"]);
+    )).toEqual(["sun-1-1", "ocean-1-1", "coral-2-1", "ink-2-1", "wildcard-1"]);
   });
 });
 
@@ -88,17 +88,17 @@ describe("meld normalization", () => {
     )).toEqual(["coral-8-1", "sun-8-1", "ocean-8-1", "ink-8-1"]);
   });
 
-  it("repairs an unordered run containing a joker", () => {
+  it("repairs an unordered run containing a wildcard", () => {
     expect(normalizeMeldTileIds(
-      ["ocean-9-1", "ocean-7-1", "joker-1"],
+      ["ocean-9-1", "ocean-7-1", "wildcard-1"],
       tiles,
-    )).toEqual(["ocean-7-1", "joker-1", "ocean-9-1"]);
+    )).toEqual(["ocean-7-1", "wildcard-1", "ocean-9-1"]);
   });
 
-  it("does not change a valid joker position and its represented value", () => {
+  it("does not change a valid wildcard position and its represented value", () => {
     expect(normalizeMeldTileIds(
-      ["ocean-10-1", "ocean-11-1", "joker-1"],
+      ["ocean-10-1", "ocean-11-1", "wildcard-1"],
       tiles,
-    )).toEqual(["ocean-10-1", "ocean-11-1", "joker-1"]);
+    )).toEqual(["ocean-10-1", "ocean-11-1", "wildcard-1"]);
   });
 });
