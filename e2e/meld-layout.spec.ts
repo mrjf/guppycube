@@ -381,7 +381,6 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
       iconWidth: iconBounds.width,
       iconHeight: iconBounds.height,
       numberVisible: decorationVisible(".meld-number"),
-      statusVisible: decorationVisible(".meld-status"),
       meldRects: elements.map((element) => {
         const bounds = element.getBoundingClientRect();
         return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
@@ -406,8 +405,6 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
   }
   expect(restingChrome.backgroundImage).toBe("none");
   expect(restingChrome.numberVisible, "the meld number should never be visible").toBe(false);
-  expect(restingChrome.statusVisible, "only unfinished melds should expose a resting validation status")
-    .toBe(restingChrome.invalid);
   expect(restingChrome.handleOpacity, "the mouse handle should be hidden while the meld is idle").toBe(0);
   expect(restingChrome.handlePointerEvents).toBe("none");
   expect(restingChrome.handleWidth).toBeLessThanOrEqual(18);
@@ -440,7 +437,6 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
     return {
       backgroundColor: getComputedStyle(firstMeld).backgroundColor,
       numberVisible: decorationVisible(".meld-number"),
-      statusVisible: decorationVisible(".meld-status"),
       meldRects: elements.map((element) => {
         const bounds = element.getBoundingClientRect();
         return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
@@ -455,8 +451,6 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
   expect(hoveredChrome.backgroundColor, "hover should reveal the meld background")
     .not.toBe("rgba(0, 0, 0, 0)");
   expect(hoveredChrome.numberVisible, "hover should not restore the removed meld number").toBe(false);
-  expect(hoveredChrome.statusVisible, "hover should not change validation-status visibility")
-    .toBe(restingChrome.invalid);
   expect(hoveredChrome.meldRects, "hover must not change any meld's position or size")
     .toEqual(restingChrome.meldRects);
   expect(hoveredChrome.tileRects, "hover must not move the tiles within the meld")
@@ -471,10 +465,12 @@ test("keeps idle meld chrome invisible and reveals it without moving the melds",
   await expect(handle).toHaveCSS("opacity", "1");
   await expect(handle).toHaveCSS("pointer-events", "auto");
   await page.keyboard.press("Enter");
-  await expect(handle).toHaveAttribute("aria-pressed", "true");
-  await expect(meld).toHaveClass(/\bis-dragging\b/);
-  expect(Number.parseFloat(await meld.evaluate((element) => getComputedStyle(element).opacity)))
-    .toBeLessThan(1);
+  await expect(handle).toHaveAttribute("aria-pressed", "false");
+  await expect(meld).not.toHaveClass(/\bis-dragging\b/);
+
+  await page.keyboard.press("Space");
+  await expect(meld.locator('.tile[aria-pressed="true"]')).toHaveCount(await meld.locator(".tile").count());
+  await expect(meld).not.toHaveClass(/\bis-dragging\b/);
 
   await page.keyboard.press("Escape");
   await expect(meld).not.toHaveClass(/\bis-dragging\b/);

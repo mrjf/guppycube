@@ -235,7 +235,9 @@ async function extendExistingRun(page: Page): Promise<void> {
   const extender = page.locator(`.rack .tile[data-tile-id="${extenderId}"]`);
   await extender.focus();
   await extender.press("Space");
-  await existingMeld.locator(".meld-status").click();
+  await existingMeld.evaluate((element) => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
   await expect(existingMeld.locator(`.tile[data-tile-id="${extenderId}"]`)).toBeVisible();
   await expect(existingMeld).toHaveClass(/\bis-valid\b/);
 }

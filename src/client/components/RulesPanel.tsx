@@ -60,15 +60,16 @@ export function RulesPanel({ onClose }: { onClose: () => void }) {
           <div>
             <p className="eyebrow">Keyboard controls</p>
             <h3 id="keyboard-guide-title">Play without the mouse.</h3>
-            <p>Tab into the tiles, then use the arrow keys to move through the table and rack.</p>
+            <p>Tab into the table or rack, then use the arrow keys to move through melds and tiles.</p>
           </div>
           <dl>
-            <div><dt><kbd>Space</kbd></dt><dd>Select or deselect the focused tile</dd></div>
-            <div><dt><kbd>Shift</kbd> + arrows / click</dt><dd>Extend the tile selection</dd></div>
+            <div><dt><kbd>Space</kbd></dt><dd>Select the focused tile or whole meld</dd></div>
+            <div><dt><kbd>Shift</kbd> + arrows / click</dt><dd>Extend a tile selection; on the felt, move between melds</dd></div>
             <div><dt><kbd>Shift</kbd> + <kbd>Enter</kbd></dt><dd>Select the focused run, group, or meld</dd></div>
             <div><dt><kbd>Option</kbd>/<kbd>Alt</kbd> + <kbd>Enter</kbd></dt><dd>Make selected tiles into a new meld</dd></div>
             <div><dt><kbd>Enter</kbd></dt><dd>Move selected tiles into the focused meld</dd></div>
             <div><dt><kbd>Esc</kbd></dt><dd>Clear the selection or cancel a meld move</dd></div>
+            <div><dt><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd></dt><dd>Reset the turn</dd></div>
             <div><dt><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>Undo the last table move</dd></div>
             <div><dt><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd>Submit a valid turn</dd></div>
             <div><dt><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Enter</kbd></dt><dd>Draw and end the turn</dd></div>

@@ -314,7 +314,7 @@ test("timeout discards an invalid UI-synchronized draft and draws a tile", async
     await page.locator(`.rack .tile[data-tile-id="${tileId}"]`).dblclick();
     expect((await draftResponsePromise).ok()).toBe(true);
     await expect(page.locator(".meld.is-invalid")).toHaveCount(1);
-    await expect(page.locator(".meld-status")).toHaveText("unfinished");
+    await expect(page.locator(".meld-status")).toHaveCount(0);
 
     const [savedForPlayer, hiddenFromOpponent] = await Promise.all([
       getGame(seat.context, game.roomCode),

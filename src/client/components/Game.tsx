@@ -12,7 +12,6 @@ import {
   HelpCircle,
   History,
   Layers3,
-  Lightbulb,
   LogOut,
   Palette,
   Plus,
@@ -157,10 +156,103 @@ function tileButtons(root: ParentNode): HTMLButtonElement[] {
   return [...root.querySelectorAll<HTMLButtonElement>(ENABLED_TILE_SELECTOR)];
 }
 
-function directionalTile(
-  current: HTMLButtonElement,
+function navigableGameElements(root: ParentNode, current: HTMLElement): HTMLElement[] {
+  const rackTiles = tileButtons(root).filter((tile) => !tile.closest(".meld-tiles"));
+  const melds = [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")];
+  const currentMeld = current.closest<HTMLElement>(".meld");
+  if (!currentMeld) return [...rackTiles, ...melds];
+
+  return [
+    ...rackTiles,
+    ...tileButtons(currentMeld),
+    ...melds.filter((meld) => meld !== currentMeld),
+  ];
+}
+
+function meldsInRow(root: ParentNode, row: string | undefined): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")]
+    .filter((meld) => meld.dataset.feltRow === row)
+    .sort((left, right) => left.getBoundingClientRect().left - right.getBoundingClientRect().left);
+}
+
+function rackTiles(root: ParentNode): HTMLButtonElement[] {
+  return tileButtons(root).filter((tile) => !tile.closest(".meld-tiles"));
+}
+
+function firstMeldInRow(current: HTMLElement, key: "ArrowLeft" | "ArrowRight"): HTMLElement | null {
+  const root = current.closest(".game-shell");
+  const meld = current.closest<HTMLElement>(".meld");
+  if (!root || !meld) return null;
+  const row = meldsInRow(root, meld.dataset.feltRow);
+  return key === "ArrowLeft" ? row.at(-1) ?? null : row[0] ?? null;
+}
+
+function verticalWrapTarget(
+  current: HTMLElement,
+  key: "ArrowDown" | "ArrowUp",
+): HTMLElement | null {
+  const root = current.closest(".game-shell");
+  if (!root) return null;
+  const feltMelds = [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")]
+    .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top
+      || left.getBoundingClientRect().left - right.getBoundingClientRect().left);
+  const rack = rackTiles(root);
+  const currentMeld = current.closest<HTMLElement>(".meld");
+
+  if (currentMeld && feltMelds.length > 0) {
+    const edgeMeld = key === "ArrowUp" ? feltMelds[0] : feltMelds.at(-1);
+    if (currentMeld === edgeMeld) {
+      return key === "ArrowUp" ? rack.at(-1) ?? null : rack[0] ?? null;
+    }
+  }
+
+  if (current.classList.contains("tile") && !current.closest(".meld-tiles") && rack.length > 0) {
+    if (key === "ArrowDown" && current === rack.at(-1)) return feltMelds[0] ?? null;
+  }
+
+  return null;
+}
+
+function directionalMeld(
+  current: HTMLElement,
   key: "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ArrowUp",
-): HTMLButtonElement | null {
+): HTMLElement | null {
+  const root = current.closest(".game-shell");
+  const currentMeld = current.closest<HTMLElement>(".meld");
+  if (!root || !currentMeld) return null;
+
+  const currentBox = currentMeld.getBoundingClientRect();
+  const currentX = currentBox.left + currentBox.width / 2;
+  const currentY = currentBox.top + currentBox.height / 2;
+  const horizontal = key === "ArrowLeft" || key === "ArrowRight";
+  const direction = key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
+
+  const candidates = [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")]
+    .filter((meld) => meld !== currentMeld)
+    .filter((meld) => !horizontal || meld.dataset.feltRow === currentMeld.dataset.feltRow);
+  const next = candidates
+    .map((meld) => {
+      const box = meld.getBoundingClientRect();
+      const dx = box.left + box.width / 2 - currentX;
+      const dy = box.top + box.height / 2 - currentY;
+      const primary = (horizontal ? dx : dy) * direction;
+      const secondary = Math.abs(horizontal ? dy : dx);
+      return { meld, primary, score: primary + secondary * 3 };
+    })
+    .filter(({ primary }) => primary > 2)
+    .sort((left, right) => left.score - right.score)[0]?.meld;
+
+  if (next) return next;
+  if (!horizontal) return null;
+  const row = meldsInRow(root, currentMeld.dataset.feltRow);
+  return key === "ArrowLeft" ? row.at(-1) ?? null : row[0] ?? null;
+}
+
+function directionalTile(
+  current: HTMLElement,
+  key: "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ArrowUp",
+  shiftKey = false,
+): HTMLElement | null {
   const root = current.closest(".game-shell");
   if (!root) return null;
   const currentBox = current.getBoundingClientRect();
@@ -169,7 +261,32 @@ function directionalTile(
   const horizontal = key === "ArrowLeft" || key === "ArrowRight";
   const direction = key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
 
-  return tileButtons(root)
+  const isRackTile = current.classList.contains("tile") && !current.closest(".meld-tiles");
+  const currentMeld = current.closest(".meld");
+  if (currentMeld && (key === "ArrowUp" || key === "ArrowDown" || (shiftKey && horizontal))) {
+    return directionalMeld(current, key);
+  }
+  if (currentMeld && horizontal) {
+    return tileButtons(currentMeld)
+      .filter((candidate) => candidate !== current)
+      .map((candidate) => {
+        const box = candidate.getBoundingClientRect();
+        const dx = box.left + box.width / 2 - currentX;
+        return { candidate, primary: dx * direction, score: dx * direction };
+      })
+      .filter(({ primary }) => primary > 2)
+      .sort((left, right) => left.score - right.score)[0]?.candidate ?? null;
+  }
+  const candidates = navigableGameElements(root, current);
+
+  if (isRackTile && key === "ArrowUp") {
+    return candidates
+      .filter((candidate) => candidate.classList.contains("meld"))
+      .map((meld) => ({ meld, box: meld.getBoundingClientRect() }))
+      .sort((left, right) => right.box.bottom - left.box.bottom || left.box.left - right.box.left)[0]?.meld ?? null;
+  }
+
+  return candidates
     .filter((candidate) => candidate !== current)
     .map((candidate) => {
       const box = candidate.getBoundingClientRect();
@@ -294,6 +411,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [error, setError] = useState("");
   const [interactionAnnouncement, setInteractionAnnouncement] = useState("");
   const [focusedTileId, setFocusedTileId] = useState<string | null>(null);
+  const [focusedMeldId, setFocusedMeldId] = useState<string | null>(null);
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
   const [copied, setCopied] = useState(false);
   const [portableLink, setPortableLink] = useState<string | null>(null);
@@ -589,29 +707,41 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   useEffect(() => {
     if (!game) return;
-    const visibleBoard = game.currentPlayerId === game.myPlayerId
-      ? game.myTurnDraft
-      : game.turnDraft;
-    const board = (visibleBoard ?? game.board).map((meld) => ({
+    const normalizedBoard = (source: Meld[]) => source.map((meld) => ({
       ...meld,
       tileIds: normalizeMeldTileIds(meld.tileIds, game.tiles),
     }));
-    const draftedTileIds = new Set(board.flatMap((meld) => meld.tileIds));
-    const rackTileIds = game.myRack.filter((tileId) => !draftedTileIds.has(tileId));
+    const baseBoard = normalizedBoard(game.board);
+    const visibleBoard = game.currentPlayerId === game.myPlayerId
+      ? game.myTurnDraft
+      : game.turnDraft;
     const layoutKey = rackLayoutPreferenceKey(game.id, game.myPlayerId);
     const storedLayout = parseRackLayout(localStorage.getItem(layoutKey));
-    const rackLayout = rackAutoSort
-      ? createRackLayout(sortTileIds(rackTileIds, game.tiles, rackSortMode))
-      : reconcileRackLayout(
-          storedLayout ?? createRackLayout(rackTileIds),
-          rackTileIds,
-          MANUAL_RACK_SLOTS_PER_ROW,
-        );
+    const layoutForBoard = (board: Meld[]): RackLayout => {
+      const draftedTileIds = new Set(board.flatMap((meld) => meld.tileIds));
+      const rackTileIds = game.myRack.filter((tileId) => !draftedTileIds.has(tileId));
+      return rackAutoSort
+        ? createRackLayout(sortTileIds(rackTileIds, game.tiles, rackSortMode))
+        : reconcileRackLayout(
+            storedLayout ?? createRackLayout(rackTileIds),
+            rackTileIds,
+            MANUAL_RACK_SLOTS_PER_ROW,
+          );
+    };
+    const board = normalizedBoard(visibleBoard ?? game.board);
+    const baseRackLayout = layoutForBoard(baseBoard);
+    const rackLayout = layoutForBoard(board);
+    const history = boardKey(board) === boardKey(baseBoard)
+      ? [{ board: baseBoard, rackLayout: baseRackLayout }]
+      : [
+          { board: baseBoard, rackLayout: baseRackLayout },
+          { board, rackLayout },
+        ];
     setDraftBoard(board);
     setDraftRackLayout(rackLayout);
     setRackLayoutOwnerKey(layoutKey);
-    setTurnHistory([{ board, rackLayout }]);
-    setTurnHistoryIndex(0);
+    setTurnHistory(history);
+    setTurnHistoryIndex(history.length - 1);
     setSelectedTileIds([]);
     setDraggedItem(null);
     setRackDropTarget(null);
@@ -647,6 +777,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const activeColorTheme = colorThemeById(colorThemeId);
   const activeTileTheme = tileThemeById(tileThemeId);
   const shortcutModifier = useMemo(() => isApplePlatform() ? "⌘" : "Ctrl", []);
+  const redoShortcut = useMemo(() => isApplePlatform() ? `${shortcutModifier}⇧Z` : `${shortcutModifier}Y`, [shortcutModifier]);
   const optionModifier = useMemo(() => isApplePlatform() ? "⌥" : "Alt", []);
   const rackRows = useMemo(() => rackSlotRows(draftRackLayout), [draftRackLayout]);
   const autosortedMeldTileIds = useMemo(() => new Set(
@@ -763,7 +894,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
     const previous = candidates.find((tile) => tile.dataset.tileId === focusedTileId);
     const selected = candidates.find((tile) => tile.dataset.tileId && selectedTileIds.includes(tile.dataset.tileId));
-    let next = previous ?? selected;
+    let next: HTMLElement | undefined = previous ?? selected;
     if (next && direction) next = directionalTile(next, direction) ?? next;
     if (!next) next = direction === "ArrowLeft" || direction === "ArrowUp" ? candidates.at(-1) : candidates[0];
     const tileId = next?.dataset.tileId;
@@ -777,7 +908,15 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function handleTileFocus(tileId: string) {
     setFocusedTileId(tileId);
+    setFocusedMeldId(null);
     setKeyboardNavigationActive(true);
+  }
+
+  function handleMeldFocus(meldId: string) {
+    setFocusedTileId(null);
+    setFocusedMeldId(meldId);
+    setKeyboardNavigationActive(true);
+    setInteractionAnnouncement(`Meld ${feltMeldNumber(meldId)} focused. Press Space to select the whole meld.`);
   }
 
   function announceSelection(tileIds: string[], changedTileId?: string) {
@@ -894,6 +1033,24 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       ? target.slotIndex
       : null;
     if (personalRackSlotIndex !== null) {
+      // Dropping a tile back onto the slot it already occupies is a no-op.
+      // Check this before converting an autosorted rack to the expanded manual
+      // layout; otherwise an unchanged drop turns sorting off and shifts the
+      // tiles into the manual rack's wider slot grid.
+      const currentRackPlacement = placeRackTilesAtSlot(
+        draftRackLayout,
+        movingTileIds,
+        personalRackSlotIndex,
+        target.type === "rack" ? target.side : undefined,
+      );
+      const rackPlacementUnchanged = currentRackPlacement.slotsPerRow === draftRackLayout.slotsPerRow
+        && currentRackPlacement.slots.length === draftRackLayout.slots.length
+        && currentRackPlacement.slots.every((tileId, index) => tileId === draftRackLayout.slots[index]);
+      if (rackPlacementUnchanged) {
+        clearTurnInteraction();
+        return;
+      }
+
       const manualRackLayout = rackAutoSort
         ? reconcileRackLayout(draftRackLayout, draftRack, MANUAL_RACK_SLOTS_PER_ROW)
         : draftRackLayout;
@@ -1036,6 +1193,61 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     toggleTileSelection(tileId);
   }
 
+  function depositSelectedTilesIntoMeld(meldId: string) {
+    if (selectedTileIds.length === 0) return;
+    moveTiles(selectedTileIds, { type: "meld", meldId });
+  }
+
+  function selectWholeMeld(meld: Meld) {
+    selectionAnchorId.current = meld.tileIds[0] ?? null;
+    setSelectedTileIds(meld.tileIds);
+    setDraggedItem(null);
+    setInteractionAnnouncement(`Meld ${feltMeldNumber(meld.id)} selected. ${meld.tileIds.length} tiles picked up.`);
+  }
+
+  function handleMeldKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+    meld: Meld,
+  ) {
+    if (!isMyTurn) return;
+    const isMeldSurfaceTarget = event.target === event.currentTarget
+      || (event.target instanceof HTMLElement && event.target.classList.contains("meld-drag-handle"));
+    if (!isMeldSurfaceTarget) return;
+    setKeyboardNavigationActive(true);
+    setFocusedMeldId(meld.id);
+
+    if (!event.metaKey && !event.ctrlKey && (event.key === " " || event.key === "Spacebar")) {
+      event.preventDefault();
+      selectWholeMeld(meld);
+      return;
+    }
+
+    if (!event.shiftKey && !event.metaKey && !event.ctrlKey && event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      depositSelectedTilesIntoMeld(meld.id);
+      return;
+    }
+
+    const navigationKeys = ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"] as const;
+    if (navigationKeys.includes(event.key as typeof navigationKeys[number])) {
+      event.preventDefault();
+      const key = event.key as typeof navigationKeys[number];
+      const horizontal = key === "ArrowLeft" || key === "ArrowRight";
+      const moveBetweenMelds = !horizontal || event.shiftKey;
+      if (moveBetweenMelds) {
+        const nextMeld = directionalMeld(event.currentTarget, key)
+          ?? (!horizontal ? verticalWrapTarget(event.currentTarget, key) : null);
+        if (nextMeld) nextMeld.focus();
+        return;
+      }
+
+      const meldTiles = tileButtons(event.currentTarget);
+      const nextTile = key === "ArrowLeft" ? meldTiles.at(-1) : meldTiles[0];
+      if (nextTile) nextTile.focus();
+    }
+  }
+
   function handleTileKeyDown(
     event: ReactKeyboardEvent<HTMLButtonElement>,
     tileId: string,
@@ -1044,11 +1256,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setKeyboardNavigationActive(true);
     setFocusedTileId(tileId);
 
-    if (event.altKey && event.key === "Enter") {
+    if (event.altKey && !event.metaKey && !event.ctrlKey && event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      const tileIds = selectedTileIds.includes(tileId) ? selectedTileIds : [tileId];
-      moveTiles(tileIds, { type: "new" });
+      if (selectedTileIds.length > 0) moveTiles(selectedTileIds, { type: "new" });
       return;
     }
 
@@ -1064,6 +1275,14 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       setSelectedTileIds(tileIds);
       setDraggedItem(null);
       announceSelection(tileIds, tileId);
+      return;
+    }
+
+    if (!event.shiftKey && !event.metaKey && !event.ctrlKey && event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      const meld = draftBoard.find((candidate) => candidate.tileIds.includes(tileId));
+      if (meld) depositSelectedTilesIntoMeld(meld.id);
       return;
     }
 
@@ -1088,10 +1307,29 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     const navigationKeys = ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"] as const;
     if (navigationKeys.includes(event.key as typeof navigationKeys[number])) {
       event.preventDefault();
-      const next = directionalTile(event.currentTarget, event.key as typeof navigationKeys[number]);
+      const key = event.key as typeof navigationKeys[number];
+      const inMeld = Boolean(event.currentTarget.closest(".meld-tiles"));
+      const horizontal = key === "ArrowLeft" || key === "ArrowRight";
+      const currentMeld = event.currentTarget.closest<HTMLElement>(".meld");
+      if (inMeld && currentMeld && horizontal && !event.shiftKey) {
+        const meldTiles = tileButtons(currentMeld);
+        if (key === "ArrowLeft" && meldTiles[0] === event.currentTarget) {
+          currentMeld.focus();
+          return;
+        }
+      }
+
+      let next = directionalTile(event.currentTarget, key, event.shiftKey);
+      if (!next) {
+        next = inMeld && currentMeld && horizontal && !event.shiftKey
+          ? firstMeldInRow(currentMeld, key)
+          : key === "ArrowUp" || key === "ArrowDown"
+            ? verticalWrapTarget(event.currentTarget, key)
+            : null;
+      }
       if (!next) return;
       const nextTileId = next.dataset.tileId;
-      if (event.shiftKey && nextTileId) extendSelectionTo(tileId, nextTileId);
+      if (event.shiftKey && nextTileId && !(inMeld && horizontal)) extendSelectionTo(tileId, nextTileId);
       next.focus();
       return;
     }
@@ -1523,6 +1761,13 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       return;
     }
 
+    if (event.shiftKey && event.key === "Backspace" && turnHistoryIndex > 0) {
+      event.preventDefault();
+      resetDraft();
+      setInteractionAnnouncement("Turn reset.");
+      return;
+    }
+
     const key = event.key.toLocaleLowerCase();
     const wantsUndo = key === "z" && !event.shiftKey;
     const wantsRedo = key === "y" || (key === "z" && event.shiftKey);
@@ -1720,20 +1965,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         </div>
       </section>
 
-      <div className="table-topline">
-        <div className="table-summary"><span className="eyebrow">The table</span><b>{draftBoard.flatMap((meld) => meld.tileIds).length} tiles down</b></div>
-        <div
-          className={`table-turn-tools ${!isMyTurn || game.status !== "playing" ? "layout-placeholder" : ""}`}
-          aria-hidden={!isMyTurn || game.status !== "playing"}
-        >
-          <div className="turn-history-buttons" aria-label="Turn history">
-            <button type="button" disabled={!isMyTurn || busy || turnHistoryIndex === 0} onClick={() => showTurnHistory(turnHistoryIndex - 1)} title="Go back one move" aria-label="Back one move"><Undo2 /> Back</button>
-            <button type="button" disabled={!isMyTurn || busy || turnHistoryIndex >= turnHistory.length - 1} onClick={() => showTurnHistory(turnHistoryIndex + 1)} title="Go forward one move" aria-label="Forward one move">Forward <Redo2 /></button>
-          </div>
-          <button className="table-reset-button" type="button" disabled={!isMyTurn || busy || turnHistoryIndex === 0} onClick={resetDraft} title="Restore the table and rack to the start of your turn"><RotateCcw /> Reset turn</button>
-        </div>
-      </div>
-
       <div className="table-layout">
         <section
           className={`table-surface ${isMyTurn ? "is-open-drop-target" : ""} ${hasLiveOpponentDraft ? "is-watching-live" : ""} ${hasBoardDefect ? "has-board-defect" : ""} ${selectedTileIds.length > 0 || draggedItem ? "has-selected-tile" : ""}`}
@@ -1774,8 +2005,9 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                   const wildcardAssignments = resolveWildcardAssignments(meld.tileIds, game.tiles);
                   return (
                     <div
-                      className={`meld ${validation.valid ? "is-valid" : "is-invalid"} ${newActivityMelds.has(meld.id) ? "is-new-activity" : ""} ${draggedItem?.type === "meld" && draggedItem.meldId === meld.id ? "is-dragging" : ""} ${dropTargetMeldId === meld.id ? "is-drop-target" : ""}`}
+                      className={`meld ${validation.valid ? "is-valid" : "is-invalid"} ${focusedMeldId === meld.id ? "is-keyboard-focused" : ""} ${newActivityMelds.has(meld.id) ? "is-new-activity" : ""} ${draggedItem?.type === "meld" && draggedItem.meldId === meld.id ? "is-dragging" : ""} ${dropTargetMeldId === meld.id ? "is-drop-target" : ""}`}
                       key={meld.id}
+                      data-meld-id={meld.id}
                       data-felt-row={placement.row + 1}
                       style={{
                         "--felt-x": `${placement.x}px`,
@@ -1783,6 +2015,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                         "--felt-scale": feltLayout.scale,
                         "--felt-meld-width": `${placement.width / feltLayout.scale}px`,
                       } as CSSProperties}
+                      tabIndex={isMyTurn ? 0 : undefined}
+                      role="group"
+                      onFocus={(event) => {
+                        if (event.target === event.currentTarget) handleMeldFocus(meld.id);
+                      }}
+                      onKeyDown={(event) => handleMeldKeyDown(event, meld)}
                       draggable={isMyTurn}
                       aria-label={`Meld ${meldIndex + 1}, ${validation.valid ? validation.kind : "unfinished"}.${selectedTileIds.length > 0 ? ` Click to add ${selectedTileIds.length === 1 ? "the selected tile" : `${selectedTileIds.length} selected tiles`}.` : " Drag to merge with another meld."}`}
                       onClick={(event) => {
@@ -1821,6 +2059,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                             ? `Combine picked-up meld with meld ${meldIndex + 1}`
                             : `${draggedItem?.type === "meld" ? "Put down" : "Pick up"} meld ${meldIndex + 1}`}
                           title="Pick up this whole meld; choose another meld to combine"
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter") return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            depositSelectedTilesIntoMeld(meld.id);
+                          }}
                           onClick={(event) => {
                             event.stopPropagation();
                             pickUpOrMergeMeld(meld.id);
@@ -1840,7 +2084,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                               selected={selectedTileIds.includes(tileId)}
                               newActivity={newActivityTiles.has(tileId)}
                               disabled={!isMyTurn}
-                          keyShortcuts="Shift+Enter Alt+Enter Control+A Meta+A"
+                              keyShortcuts="Enter Shift+Enter Alt+Enter Control+A Meta+A"
                           onClick={(event) => handleTileClick(event, tileId)}
                           onFocus={() => handleTileFocus(tileId)}
                           onKeyDown={(event) => handleTileKeyDown(event, tileId)}
@@ -1851,7 +2095,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                           );
                         })}
                       </div>
-                      <span className="meld-status">{validation.valid ? validation.kind : "unfinished"}</span>
                     </div>
                   );
                 })}
@@ -1961,6 +2204,25 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
               title="Sort by number, then color"
               onClick={() => changeRackSort("number-first")}
             >123 → Color</button>
+            {isMyTurn && (
+              <div className="rack-turn-tools" aria-label="Turn history">
+                <div className="turn-history-buttons">
+                  <button type="button" disabled={busy || turnHistoryIndex === 0} onClick={() => showTurnHistory(turnHistoryIndex - 1)} title="Go back one move" aria-label="Back one move" aria-keyshortcuts="Control+Z Meta+Z"><Undo2 /> Back <kbd aria-hidden="true">{shortcutModifier}Z</kbd></button>
+                  <button type="button" disabled={busy || turnHistoryIndex >= turnHistory.length - 1} onClick={() => showTurnHistory(turnHistoryIndex + 1)} title="Go forward one move" aria-label="Forward one move" aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z">Forward <kbd aria-hidden="true">{redoShortcut}</kbd> <Redo2 /></button>
+                </div>
+                <button className="table-reset-button" type="button" disabled={busy || turnHistoryIndex === 0} onClick={resetDraft} title="Restore the table and rack to the start of your turn" aria-keyshortcuts="Control+Shift+Backspace Meta+Shift+Backspace"><RotateCcw /> Reset turn <kbd aria-hidden="true">{shortcutModifier}⇧⌫</kbd></button>
+              </div>
+            )}
+            {isMyTurn && (selectedTileIds.length > 0 || draggedItem?.type === "meld") && (
+              <div className="selection-actions" aria-label="Selection actions">
+                {selectedTileIds.length > 0 && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "new" })}>New meld <kbd aria-hidden="true">{optionModifier}↵</kbd></button>}
+                {selectionCanReturnToRack && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "rack" })}>Return to rack</button>}
+                <button type="button" onClick={() => {
+                  clearTurnInteraction();
+                  setInteractionAnnouncement("Selection canceled.");
+                }}>{draggedItem?.type === "meld" ? "Cancel meld move" : "Clear selection"} <kbd aria-hidden="true">Esc</kbd></button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2068,29 +2330,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         </div>
 
         {error && <p className="turn-error" role="alert">{error}</p>}
-        <div className="turn-actions">
-          <div className="turn-action-copy">
-            <div className={`turn-guidance ${game.noMovePossible && game.enabledAssists.includes("no-move-alert") ? "is-no-move" : ""}`} role="status" aria-live="polite">
-              {game.status === "finished"
-                ? <><Crown /> Game over</>
-                : isMyTurn && game.noMovePossible && game.enabledAssists.includes("no-move-alert")
-                  ? <><Lightbulb /> No legal move is available.{game.enabledAssists.includes("auto-draw") ? " Auto-draw will end this turn." : " Draw to end your turn."}</>
-                  : isMyTurn
-                    ? <><span className="pulse-dot" /> {turnValidation?.reason ?? "Your play is ready to commit."}</>
-                    : <><Clock3 /> Watch the table—your rack stays private.</>}
-            </div>
-            {isMyTurn && (selectedTileIds.length > 0 || draggedItem?.type === "meld") && (
-              <div className="selection-actions" aria-label="Selection actions">
-                {selectedTileIds.length > 0 && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "new" })}>New meld <kbd aria-hidden="true">{optionModifier}↵</kbd></button>}
-                {selectionCanReturnToRack && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "rack" })}>Return to rack</button>}
-                <button type="button" onClick={() => {
-                  clearTurnInteraction();
-                  setInteractionAnnouncement("Selection canceled.");
-                }}>{draggedItem?.type === "meld" ? "Cancel meld move" : "Clear selection"} <kbd aria-hidden="true">Esc</kbd></button>
-              </div>
-            )}
-          </div>
-        </div>
       </section>
 
       {game.status === "finished" && (

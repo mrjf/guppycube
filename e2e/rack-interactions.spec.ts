@@ -408,6 +408,14 @@ test("keeps manual slots at a fixed pitch, rearranges while waiting, persists th
     const numberButton = page.getByRole("button", { name: "123 → Color", exact: true });
     await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
 
+    const initialSortedLayout = await rackSlotSnapshot(page);
+    const initialSortedSlotCount = await page.locator(".rack-slot").count();
+    const sameSlotTile = page.locator(".rack .tile").first();
+    await dragRackTileToSlot(page, sameSlotTile, sameSlotTile.locator(".."));
+    await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
+    expect(await page.locator(".rack-slot").count()).toBe(initialSortedSlotCount);
+    expect(await rackSlotSnapshot(page)).toEqual(initialSortedLayout);
+
     const initiallySortedTile = page.locator(".rack .tile").first();
     const activeTurnTarget = page.locator(".rack-slot").last();
     await dragRackTileToSlot(page, initiallySortedTile, activeTurnTarget);
@@ -674,19 +682,45 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Escape");
 
     await firstTile.focus();
+    await page.keyboard.press("Space");
     await page.keyboard.press("Alt+Enter");
     await page.locator(`.rack .tile[data-tile-id="${secondTileId}"]`).focus();
+    await page.keyboard.press("Space");
     await page.keyboard.press("Alt+Enter");
     await expect(page.locator(".meld")).toHaveCount(2);
 
-    const firstMeldMove = page.locator(".meld-drag-handle").first();
+    const expectedUpEntryMeldId = await page.locator(".meld").evaluateAll((melds) => [...melds]
+      .sort((left, right) => {
+        const leftBox = left.getBoundingClientRect();
+        const rightBox = right.getBoundingClientRect();
+        return rightBox.bottom - leftBox.bottom || leftBox.left - rightBox.left;
+      })[0]?.getAttribute("data-meld-id"));
+    const remainingRackTile = page.locator(".rack .tile").first();
+    await remainingRackTile.focus();
+    await page.keyboard.press("ArrowUp");
+    const upEntryMeld = page.locator(`.meld[data-meld-id="${expectedUpEntryMeldId}"]`);
+    await expect(upEntryMeld).toHaveClass(/\bis-keyboard-focused\b/);
+    await page.keyboard.press("ArrowRight");
+    await expect(upEntryMeld.locator(".tile").first()).toBeFocused();
+
+    const firstMeld = page.locator(".meld").first();
+    await firstMeld.focus();
+    await expect(firstMeld).toHaveClass(/\bis-keyboard-focused\b/);
+    await page.keyboard.press("Space");
+    await expect(firstMeld.locator('.tile[aria-pressed="true"]')).toHaveCount(1);
+    await page.keyboard.press("ArrowRight");
+    await expect(firstMeld.locator(".tile").first()).toBeFocused();
+    await page.keyboard.press("Escape");
+
+    const firstMeldMove = firstMeld.locator(":scope > .meld-drag-handle");
     await expect(firstMeldMove).toHaveAccessibleName("Pick up meld 1");
+    const secondMeldTile = page.locator(".meld").nth(1).locator(".tile").first();
+    await secondMeldTile.focus();
+    await page.keyboard.press("Space");
+    await expect(secondMeldTile).toHaveAttribute("aria-pressed", "true");
     await firstMeldMove.focus();
     await page.keyboard.press("Enter");
-    await expect(firstMeldMove).toHaveAttribute("aria-pressed", "true");
-    const secondMeldMove = page.getByRole("button", { name: "Combine picked-up meld with meld 2" });
-    await secondMeldMove.focus();
-    await page.keyboard.press("Enter");
+    await expect(firstMeldMove).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator(".meld")).toHaveCount(1);
     await expect(page.locator(".meld .tile")).toHaveCount(2);
 

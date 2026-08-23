@@ -118,7 +118,7 @@ test("shows a human opponent's live table attempt without exposing their private
     await expect(viewerTable).toHaveAccessibleName(/live attempt by .*Needs attention:/i);
     await expect(viewer.page.locator(".table-drop-instruction")).toHaveCount(0);
     await expect(viewer.page.locator(".meld.is-invalid")).toHaveCount(1);
-    await expect(viewer.page.locator(".meld-status")).toHaveText("unfinished");
+    await expect(viewer.page.locator(".meld-status")).toHaveCount(0);
 
     const draftAsSeenByActive = await getGame(active.context, roomCode);
     const draftAsSeenByViewer = await getGame(viewer.context, roomCode);
@@ -132,6 +132,10 @@ test("shows a human opponent's live table attempt without exposing their private
       expect.objectContaining({ tileIds: [draftedTileId] }),
     ]);
     expect(draftAsSeenByViewer.myTurnDraft).toBeNull();
+
+    await active.page.reload();
+    await expect(active.page.getByText("Your turn", { exact: true })).toBeVisible();
+    await expect(active.page.getByRole("button", { name: "Reset turn" })).toBeEnabled();
 
     const activeCard = viewer.page.locator(".player-card").filter({
       has: viewer.page.getByText(active.name, { exact: true }),
