@@ -73,9 +73,9 @@ describe("meld validation", () => {
     });
   });
 
-  it("shows both legal replacement colors for a wildcard in a group of three", () => {
+  it("chooses a stable legal replacement color for a wildcard in a group of three", () => {
     expect(resolveWildcardAssignments(["coral-7-1", "sun-7-1", "wildcard-1"], tiles)).toEqual({
-      "wildcard-1": { value: 7, color: null, possibleColors: ["ocean", "ink"] },
+      "wildcard-1": { value: 7, color: "ocean", possibleColors: ["ocean", "ink"] },
     });
   });
 

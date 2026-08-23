@@ -26,7 +26,7 @@ Use Bun 1.3.14 or newer, then open the shown local URL. If a Bono-compatible loc
 
 To test multiplayer, create a room in one browser and open the invite in another browser/profile. The timeout E2E cases use a loopback-only per-room override so they do not wait for the production two-minute deadline.
 
-Local development rooms survive reloads and dev-server restarts. Room state is stored in `.wrangler/state`, and an API-scoped `HttpOnly` browser cookie tells the server which player this browser controls. The static client derives only the room code from the shared URL; JavaScript never reads or submits the player capability. Use the in-game exit action when you intentionally want to return to the new/join table screen.
+Local development rooms survive reloads and dev-server restarts. Room state is stored in `.wrangler/state`. Ordinary visits use an API-scoped `HttpOnly` browser cookie, while the copy button creates a portable personal URL containing that player’s secure link credential; a new browser can use the URL without a cookie. Use the in-game exit action when you intentionally want to return to the new/join table screen.
 
 Useful checks:
 

@@ -701,6 +701,7 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Control+Enter");
     await expect(page.getByText(/Turn not ready\./)).toBeAttached();
 
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press("Meta+Shift+Enter");
     await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
   } finally {

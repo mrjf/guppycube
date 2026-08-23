@@ -1,5 +1,6 @@
 import {
   ArrowDownToLine,
+  Bell,
   Bot,
   Check,
   Clock3,
@@ -38,8 +39,7 @@ import type { TileSortMode } from "../../shared/sorting";
 import { ASSIST_DEFINITIONS } from "../../shared/types";
 import type { AssistId, ComputerStrategyId, GameEvent, GameSession, Meld, PublicGameState } from "../../shared/types";
 import { validators } from "../../validation";
-import { addComputer, ApiRequestError, getGame, saveTurnDraft, setAssist, socketUrl, startGame, takeAction } from "../api";
-import { appPath } from "../base-path";
+import { addComputer, ApiRequestError, getGame, getPlayerLink, saveTurnDraft, setAssist, socketUrl, startGame, takeAction } from "../api";
 import { createFeltLayout } from "../felt-layout";
 import type { FeltLayout } from "../felt-layout";
 import { mergeGameState } from "../game-state";
@@ -92,9 +92,16 @@ const RACK_HOLD_REPEAT_MS = 350;
 const ENABLED_TILE_SELECTOR = ".tile[data-tile-id]:not(:disabled)";
 const COMPUTER_RACK_PREFERENCE_KEY = "guppycube:show-computer-racks";
 const RACK_AUTOSORT_PREFERENCE_KEY = "guppycube:rack-autosort";
+const TURN_NOTIFICATIONS_PREFERENCE_KEY = "guppycube:turn-notifications";
 const COLOR_THEME_PREFERENCE_KEY = "guppycube:color-theme";
 const TILE_THEME_PREFERENCE_KEY = "guppycube:tile-theme";
 const ALL_COMPUTER_RACKS = "*";
+
+type BrowserNotificationPermission = NotificationPermission | "unsupported";
+
+function browserNotificationPermission(): BrowserNotificationPermission {
+  return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+}
 
 function legacyThemePreference(): string | null {
   return localStorage.getItem("guppycube:theme") ?? localStorage.getItem("rack-and-run:theme");
@@ -289,9 +296,17 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [focusedTileId, setFocusedTileId] = useState<string | null>(null);
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [portableLink, setPortableLink] = useState<string | null>(null);
   const [showActivity, setShowActivity] = useState(false);
   const [showAssists, setShowAssists] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [turnNotificationsEnabled, setTurnNotificationsEnabled] = useState(() =>
+    localStorage.getItem(TURN_NOTIFICATIONS_PREFERENCE_KEY) === "true",
+  );
+  const [notificationPermission, setNotificationPermission] = useState<BrowserNotificationPermission>(
+    browserNotificationPermission,
+  );
   const [flashedAction, setFlashedAction] = useState<GameEvent | null>(null);
   const [newActivityTileIds, setNewActivityTileIds] = useState<string[]>([]);
   const [openComputerRackIds, setOpenComputerRackIds] = useState(storedOpenComputerRackIds);
@@ -316,6 +331,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const rackHoldTimer = useRef<number | null>(null);
   const rackHoldRun = useRef(0);
   const rackHoldPointerId = useRef<number | null>(null);
+  const multiTileDragPreview = useRef<HTMLSpanElement | null>(null);
   const suppressTileClick = useRef<string | null>(null);
   const doubleClickMeldId = useRef<string | null>(null);
   const selectionAnchorId = useRef<string | null>(null);
@@ -325,6 +341,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const observedRackTileIds = useRef<Set<string>>(new Set());
   const actionFlashTimer = useRef<number | null>(null);
   const newActivityTimer = useRef<number | null>(null);
+  const previousTurn = useRef<{
+    gameId: string;
+    currentPlayerId: string | null;
+  } | null>(null);
   const draftSequence = useRef(0);
   const gameShortcutRef = useRef<(event: KeyboardEvent) => void>(() => {});
   const feltLayoutMemory = useRef<{
@@ -354,6 +374,18 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     });
     return () => { active = false; };
   }, [onSessionMissing, refresh, session.roomCode]);
+
+  useEffect(() => {
+    let active = true;
+    getPlayerLink(session)
+      .then(({ link }) => {
+        if (active) setPortableLink(link);
+      })
+      .catch(() => {
+        // The table state request remains the source of truth for session errors.
+      });
+    return () => { active = false; };
+  }, [session]);
 
   useEffect(() => {
     let closed = false;
@@ -402,9 +434,49 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const updatePermission = () => setNotificationPermission(browserNotificationPermission());
+    document.addEventListener("visibilitychange", updatePermission);
+    return () => document.removeEventListener("visibilitychange", updatePermission);
+  }, []);
+
+  useEffect(() => {
+    if (!game) return;
+    const previous = previousTurn.current;
+    previousTurn.current = {
+      gameId: game.id,
+      currentPlayerId: game.currentPlayerId,
+    };
+    if (
+      !previous
+      || previous.gameId !== game.id
+      || previous.currentPlayerId === game.myPlayerId
+      || game.currentPlayerId !== game.myPlayerId
+      || game.status !== "playing"
+      || !turnNotificationsEnabled
+      || notificationPermission !== "granted"
+      || document.visibilityState !== "hidden"
+    ) return;
+
+    try {
+      const notification = new Notification("Your turn", {
+        body: `It's your turn at ${game.id}.`,
+        tag: `guppycube-turn-${game.id}`,
+        silent: true,
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    } catch {
+      setNotificationPermission(browserNotificationPermission());
+    }
+  }, [game, notificationPermission, turnNotificationsEnabled]);
+
   useEffect(() => () => {
     if (actionFlashTimer.current !== null) window.clearTimeout(actionFlashTimer.current);
     if (newActivityTimer.current !== null) window.clearTimeout(newActivityTimer.current);
+    multiTileDragPreview.current?.remove();
   }, []);
 
   useEffect(() => {
@@ -529,7 +601,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     const layoutKey = rackLayoutPreferenceKey(game.id, game.myPlayerId);
     const storedLayout = parseRackLayout(localStorage.getItem(layoutKey));
     const rackLayout = rackAutoSort
-      ? createRackLayout(sortTileIds(rackTileIds, game.tiles, rackSortMode), MANUAL_RACK_SLOTS_PER_ROW)
+      ? createRackLayout(sortTileIds(rackTileIds, game.tiles, rackSortMode))
       : reconcileRackLayout(
           storedLayout ?? createRackLayout(rackTileIds),
           rackTileIds,
@@ -804,7 +876,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setDraftRackLayout(rackAutoSort
       ? createRackLayout(
           sortTileIds(rackTileIds(draft.rackLayout), game.tiles, rackSortMode),
-          MANUAL_RACK_SLOTS_PER_ROW,
         )
       : draft.rackLayout);
     if (boardKey(draft.board) !== boardKey(draftBoard)) syncTurnDraft(draft.board);
@@ -896,7 +967,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         if (rackAutoSort) {
           nextRackLayout = createRackLayout(
             sortTileIds([...rackTileIds(nextRackLayout), ...movingTileIds], game.tiles, rackSortMode),
-            MANUAL_RACK_SLOTS_PER_ROW,
           );
         } else if (target.slotIndex !== undefined) {
           nextRackLayout = placeRackTilesAtSlot(draftRackLayout, movingTileIds, target.slotIndex, target.side);
@@ -1085,6 +1155,24 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     event.dataTransfer.setData(DRAG_ITEM_TYPE, JSON.stringify(item));
     event.dataTransfer.setData("text/tile-id", tileId);
     event.dataTransfer.setData("text/tile-ids", JSON.stringify(tileIds));
+    multiTileDragPreview.current?.remove();
+    multiTileDragPreview.current = null;
+    if (tileIds.length > 1 && typeof event.dataTransfer.setDragImage === "function") {
+      const preview = document.createElement("span");
+      preview.className = "tile-drag-preview";
+      const backTile = document.createElement("span");
+      backTile.className = "tile-drag-preview-tile tile-drag-preview-tile-back";
+      const frontTile = document.createElement("span");
+      frontTile.className = "tile-drag-preview-tile tile-drag-preview-tile-front";
+      preview.append(backTile, frontTile);
+      const tileStyle = getComputedStyle(event.currentTarget);
+      for (const property of ["--tile-face", "--tile-edge", "--tile-border-width", "--tile-radius", "--tile-sheen"]) {
+        preview.style.setProperty(property, tileStyle.getPropertyValue(property));
+      }
+      document.body.append(preview);
+      event.dataTransfer.setDragImage(preview, 29, 38);
+      multiTileDragPreview.current = preview;
+    }
     setSelectedTileIds(tileIds);
     setDraggedItem(item);
   }
@@ -1234,6 +1322,8 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   }
 
   function finishDrag() {
+    multiTileDragPreview.current?.remove();
+    multiTileDragPreview.current = null;
     setDraggedItem(null);
     setRackDropTarget(null);
     setDropTargetMeldId(null);
@@ -1251,13 +1341,11 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (game) {
       setDraftRackLayout(createRackLayout(
         sortTileIds(draftRack, game.tiles, nextMode),
-        MANUAL_RACK_SLOTS_PER_ROW,
       ));
       setTurnHistory((history) => history.map((draft) => ({
         ...draft,
         rackLayout: createRackLayout(
           sortTileIds(rackTileIds(draft.rackLayout), game.tiles, nextMode),
-          MANUAL_RACK_SLOTS_PER_ROW,
         ),
       })));
       clearTurnInteraction();
@@ -1317,7 +1405,15 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   }
 
   async function copyInvite() {
-    const invite = `${window.location.origin}${appPath(`/room/${session.roomCode}`)}`;
+    let invite = portableLink;
+    if (!invite) {
+      try {
+        invite = (await getPlayerLink(session)).link;
+        setPortableLink(invite);
+      } catch {
+        invite = window.location.href;
+      }
+    }
     try {
       await navigator.clipboard.writeText(invite);
       setCopied(true);
@@ -1337,6 +1433,28 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     const theme = tileThemeById(next);
     setTileThemeId(theme.id);
     localStorage.setItem(TILE_THEME_PREFERENCE_KEY, theme.id);
+  }
+
+  async function changeTurnNotifications(enabled: boolean) {
+    if (!enabled) {
+      setTurnNotificationsEnabled(false);
+      localStorage.setItem(TURN_NOTIFICATIONS_PREFERENCE_KEY, "false");
+      return;
+    }
+
+    if (notificationPermission === "unsupported") return;
+    let permission: NotificationPermission;
+    try {
+      permission = notificationPermission === "default"
+        ? await Notification.requestPermission()
+        : notificationPermission;
+    } catch {
+      return;
+    }
+    setNotificationPermission(permission);
+    const allowed = permission === "granted";
+    setTurnNotificationsEnabled(allowed);
+    localStorage.setItem(TURN_NOTIFICATIONS_PREFERENCE_KEY, String(allowed));
   }
 
   function drawAndEnd() {
@@ -1448,7 +1566,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           <p className="eyebrow">Your table is ready</p>
           <h1>Bring in the<br />competition.</h1>
           <button className="invite-code" type="button" onClick={copyInvite}>
-            <span>Table name</span><strong>{game.id}</strong><small>{copied ? <><Check size={15} /> Copied invite link</> : <><Copy size={15} /> Click to copy invite</>}</small>
+            <span>Table name</span><strong>{game.id}</strong><small>{copied ? <><Check size={15} /> Copied your player link</> : <><Copy size={15} /> Click to copy your player link</>}</small>
           </button>
           <div className="lobby-seats">
             {Array.from({ length: game.maxPlayers }, (_, index) => {
@@ -1520,12 +1638,13 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       <p className="sr-only" aria-live="polite" aria-atomic="true">{interactionAnnouncement}</p>
       <header className="game-header">
         <button className="wordmark wordmark-button compact-mark" type="button" onClick={onExit} aria-label="guppycube home"><span><CatFaceIcon className="wordmark-cat" /></span><b>guppycube</b></button>
-        <div className="room-pill"><span>TABLE</span> {game.id}</div>
+        <div className="room-pill"><span>TABLE</span> <strong>{game.id}</strong><button className="room-copy-button" type="button" onClick={copyInvite} aria-label={copied ? "Player link copied" : "Copy your player link"} title={copied ? "Player link copied" : "Copy your player link"}>{copied ? <Check /> : <Copy />}</button></div>
         <div className="header-actions">
           <span className={`connection-pill is-${connection}`}>{connection === "online" ? <Wifi /> : <WifiOff />} {connection}</span>
-          <button className="icon-button" type="button" aria-pressed={showAppearance} onClick={() => { setShowAppearance(!showAppearance); setShowAssists(false); setShowActivity(false); }} aria-label="Appearance"><Palette /></button>
-          <button className="icon-button" type="button" aria-pressed={showAssists} onClick={() => { setShowAssists(!showAssists); setShowAppearance(false); setShowActivity(false); }} aria-label="Assists"><SlidersHorizontal /></button>
-          <button className="icon-button" type="button" aria-pressed={showActivity} onClick={() => { setShowActivity(!showActivity); setShowAppearance(false); setShowAssists(false); }} aria-label="Activity"><History /></button>
+          <button className={`icon-button ${turnNotificationsEnabled && notificationPermission === "granted" ? "is-active" : ""}`} type="button" aria-pressed={showNotifications} onClick={() => { setShowNotifications(!showNotifications); setShowAppearance(false); setShowAssists(false); setShowActivity(false); }} aria-label="Turn notifications"><Bell /></button>
+          <button className="icon-button" type="button" aria-pressed={showAppearance} onClick={() => { setShowAppearance(!showAppearance); setShowNotifications(false); setShowAssists(false); setShowActivity(false); }} aria-label="Appearance"><Palette /></button>
+          <button className="icon-button" type="button" aria-pressed={showAssists} onClick={() => { setShowAssists(!showAssists); setShowNotifications(false); setShowAppearance(false); setShowActivity(false); }} aria-label="Assists"><SlidersHorizontal /></button>
+          <button className="icon-button" type="button" aria-pressed={showActivity} onClick={() => { setShowActivity(!showActivity); setShowNotifications(false); setShowAppearance(false); setShowAssists(false); }} aria-label="Activity"><History /></button>
           <button className="icon-button" type="button" onClick={onShowRules} aria-label="How to play and keyboard controls"><HelpCircle /></button>
           <button className="icon-button desktop-only" type="button" onClick={onExit} aria-label="Leave table"><LogOut /></button>
         </div>
@@ -1746,6 +1865,32 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           <aside className="activity-panel">
             <div className="activity-heading"><History /><div><span className="eyebrow">Table talk</span><h2>Activity</h2></div></div>
             <ol>{[...game.history].reverse().map((item) => <li key={item.id}><span className={`activity-dot kind-${item.kind}`} /><div><p>{item.message}</p><time>{new Date(item.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div></li>)}</ol>
+          </aside>
+        )}
+        {showNotifications && (
+          <aside className="activity-panel notification-panel">
+            <div className="activity-heading"><Bell /><div><span className="eyebrow">Your setup</span><h2>Turn alerts</h2></div></div>
+            <p className="assist-panel-copy">Get one quiet browser notification when your turn begins while this table is in the background. No reminders.</p>
+            <div className="assist-controls notification-controls">
+              <label className={notificationPermission === "unsupported" ? "is-disallowed" : ""}>
+                <span><strong>Notify me when it’s my turn</strong><small>Only while this table is open in a background tab.</small></span>
+                {notificationPermission === "unsupported" ? (
+                  <b>Not supported</b>
+                ) : (
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label="Notify me when it’s my turn"
+                    checked={turnNotificationsEnabled && notificationPermission === "granted"}
+                    disabled={notificationPermission === "denied"}
+                    onChange={(event) => { void changeTurnNotifications(event.target.checked); }}
+                  />
+                )}
+              </label>
+            </div>
+            {notificationPermission === "denied" && (
+              <p className="notification-note">Notifications are blocked by your browser. Allow them for this site in browser settings, then try again.</p>
+            )}
           </aside>
         )}
         {showAssists && (

@@ -11,6 +11,21 @@ export function encodeSessionCookie(session: SessionCredentials): string {
   return encodeURIComponent(JSON.stringify(session));
 }
 
+export function encodePlayerLink(session: SessionCredentials): string {
+  return `${session.playerId}.${session.token}`;
+}
+
+export function decodePlayerLink(value: string | null | undefined, roomCode: string): unknown {
+  if (!value) return undefined;
+  const separator = value.indexOf(".");
+  if (separator <= 0 || separator === value.length - 1) return undefined;
+  return {
+    roomCode: normalizeTableName(roomCode),
+    playerId: value.slice(0, separator),
+    token: value.slice(separator + 1),
+  };
+}
+
 export function readCookie(cookieHeader: string, name: string): string | undefined {
   for (const part of cookieHeader.split(";")) {
     const separator = part.indexOf("=");

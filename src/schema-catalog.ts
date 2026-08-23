@@ -11,6 +11,7 @@ import {
   joinGameInputSchema,
   meldSchema,
   okResponseSchema,
+  playerLinkSchema,
   publicGameStateSchema,
   publicPlayerSchema,
   registrationResponseSchema,
@@ -168,6 +169,14 @@ export const schemaCatalogEntries = [
     category: "system",
     description: "The server-only room capability held in an HttpOnly browser cookie.",
     schema: sessionCredentialsSchema,
+  },
+  {
+    key: "playerLinkSchema",
+    title: "Player link",
+    typeName: "PlayerLink",
+    category: "api",
+    description: "A portable personal link that identifies and authenticates one seat at a table.",
+    schema: playerLinkSchema,
   },
   {
     key: "okResponseSchema",

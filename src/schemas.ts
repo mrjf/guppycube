@@ -416,9 +416,20 @@ export const sessionCredentialsSchema = {
   properties: {
     roomCode: { type: "string", pattern: TABLE_NAME_PATTERN },
     playerId: identifier,
-    token: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    token: { type: "string", pattern: "^(?:[a-f0-9]{64}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$" },
   },
   required: ["roomCode", "playerId", "token"],
+} as const;
+
+export const playerLinkSchema = {
+  $schema: dialect,
+  $id: "https://guppycube.local/schemas/player-link-v1",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    link: { type: "string", minLength: 1, maxLength: 500 },
+  },
+  required: ["link"],
 } as const;
 
 export const okResponseSchema = {
@@ -658,6 +669,7 @@ export type TakeActionInput = FromSchema<typeof takeActionInputSchema>;
 export type SaveTurnDraftInput = FromSchema<typeof saveTurnDraftInputSchema>;
 export type GameSession = FromSchema<typeof gameSessionSchema>;
 export type SessionCredentials = FromSchema<typeof sessionCredentialsSchema>;
+export type PlayerLink = FromSchema<typeof playerLinkSchema>;
 export type OkResponse = FromSchema<typeof okResponseSchema>;
 export type HealthResponse = FromSchema<typeof healthResponseSchema>;
 export type ApiError = FromSchema<typeof apiErrorSchema>;

@@ -18,7 +18,7 @@ The current implementation is closer to this than it looks. The honest audit:
 
 | Criterion | Today | Gap |
 | --- | --- | --- |
-| Any client can hit the server | JSON API + WebSocket, schema-validated both ways, no accounts. But auth is an `HttpOnly` cookie the server sets on create/join, the API rejects any request with a cross-origin `Origin`, and the WebSocket reads only the cookie. Schema catalog exists but is loopback-only. | Bearer tokens, CORS for token requests, WS auth via subprotocol, publish the catalog. |
+| Any client can hit the server | JSON API + WebSocket, schema-validated both ways, no accounts. Auth is an `HttpOnly` cookie for ordinary browser visits or a personal player link for portable browser handoff; the API rejects any request with a cross-origin `Origin`, and the WebSocket accepts either credential. Schema catalog exists but is loopback-only. | Bearer tokens, CORS for token requests, WS auth via subprotocol, publish the catalog. |
 | Own the gameplay data | The Durable Object stores full state, but "history" is 40 human-readable messages, not moves. Nothing is exportable; nothing is ever deleted. | Replace history with the event record, expose it, add retention and reveal policies, add sinks. |
 | No ads / third-party cookies | None. | — |
 | No third-party requests | `styles.css` imports DM Sans and Playfair Display from `fonts.googleapis.com` — every page load sends the visitor's IP to Google (an EU court has treated exactly this as a GDPR violation). | Self-host the two font files (both are OFL licensed). |

@@ -150,7 +150,8 @@ export function validateMeld(tileIds: string[], tileMap: Record<string, Tile>): 
 /**
  * Resolves what each wildcard represents in a completed meld.
  * Runs always have one exact color/value per position. A wildcard in a group of
- * three may legally be replaced by either missing color, so both are retained.
+ * three may legally be replaced by either missing color; choose the first one
+ * for a stable display while retaining both legal choices.
  */
 export function resolveWildcardAssignments(
   tileIds: string[],
@@ -188,7 +189,7 @@ export function resolveWildcardAssignments(
     if (tileMap[id]?.wildcard) {
       assignments[id] = {
         value: first.tile.value,
-        color: possibleColors.length === 1 ? possibleColors[0]! : null,
+        color: possibleColors[0] ?? null,
         possibleColors: [...possibleColors],
       };
     }

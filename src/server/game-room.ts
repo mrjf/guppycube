@@ -30,9 +30,10 @@ import type {
   Tile,
   TurnAction,
 } from "../schemas";
-import { decodeSessionCookie } from "../shared/session-cookie";
+import { decodePlayerLink, decodeSessionCookie } from "../shared/session-cookie";
 import { describeValidationErrors, validators } from "../validation";
 import { getComputerStrategy } from "./computer-strategies";
+import { normalizePhoneNumber, sendTwilioMessage } from "./twilio";
 
 interface SocketAttachment {
   playerId: string;
@@ -174,6 +175,12 @@ export class GameRoom extends DurableObject<Env> {
           singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
           json TEXT NOT NULL,
           updated_at INTEGER NOT NULL
+        )
+      `);
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS sms_subscriptions (
+          phone_number TEXT PRIMARY KEY,
+          subscribed_at INTEGER NOT NULL
         )
       `);
     });
@@ -619,6 +626,7 @@ export class GameRoom extends DurableObject<Env> {
     this.addHistory(state, event("started", `${state.players[0]?.name ?? "The first player"} goes first.`));
     this.persist(state);
     this.broadcast(state);
+    this.ctx.waitUntil(this.notifySmsSubscribers(state));
     await this.scheduleDeadline(state);
     return { ok: true };
   }
@@ -706,7 +714,78 @@ export class GameRoom extends DurableObject<Env> {
     state.updatedAt = Date.now();
     this.persist(state);
     this.broadcast(state);
+    this.ctx.waitUntil(this.notifySmsSubscribers(state));
     await this.scheduleDeadline(state);
+  }
+
+  private smsSubscribers(): string[] {
+    return this.ctx.storage.sql
+      .exec<{ phone_number: string }>("SELECT phone_number FROM sms_subscriptions")
+      .toArray()
+      .map((row) => row.phone_number);
+  }
+
+  private async notifySmsSubscribers(state: StoredGame): Promise<void> {
+    const subscribers = this.smsSubscribers();
+    if (subscribers.length === 0) return;
+
+    const lastEvent = state.history.at(-1);
+    const winner = state.winnerId
+      ? state.players.find((player) => player.id === state.winnerId)
+      : undefined;
+    const currentPlayer = state.status === "playing" ? state.players[state.turnIndex] : undefined;
+    const next = currentPlayer
+      ? `Now: ${currentPlayer.name}'s turn.`
+      : `Now: game over${winner ? ` — ${winner.name} won.` : "."}`;
+    const message = [
+      `Guppycube ${state.id}`,
+      lastEvent ? `Last: ${lastEvent.message}` : undefined,
+      next,
+    ].filter((line): line is string => Boolean(line)).join("\n");
+
+    const results = await Promise.allSettled(
+      subscribers.map((phoneNumber) => sendTwilioMessage(this.env, phoneNumber, message)),
+    );
+    const failures = results.filter((result) => result.status === "rejected").length;
+    if (failures > 0) {
+      console.error(JSON.stringify({
+        message: "some SMS turn notifications failed",
+        roomCode: state.id,
+        failures,
+        subscriberCount: subscribers.length,
+      }));
+    }
+  }
+
+  async subscribeSms(phoneNumber: string): Promise<string> {
+    const normalized = normalizePhoneNumber(phoneNumber);
+    if (!normalized) return "I couldn't read that phone number.";
+    const state = this.load();
+    if (!state) return "That game table no longer exists.";
+
+    this.ctx.storage.sql.exec(
+      `INSERT INTO sms_subscriptions (phone_number, subscribed_at)
+       VALUES (?, ?)
+       ON CONFLICT(phone_number) DO UPDATE SET subscribed_at = excluded.subscribed_at`,
+      normalized,
+      Date.now(),
+    );
+
+    if (state.status === "playing") {
+      const currentPlayer = state.players[state.turnIndex];
+      return `Subscribed to ${state.id}. ${currentPlayer ? `${currentPlayer.name}'s turn is now.` : "The game is in progress."}`;
+    }
+    if (state.status === "finished") return `Subscribed to ${state.id}, but that game is already over.`;
+    return `Subscribed to ${state.id}. I'll text you when the game starts and turns change.`;
+  }
+
+  async unsubscribeSms(phoneNumber: string): Promise<string> {
+    const normalized = normalizePhoneNumber(phoneNumber);
+    if (!normalized) return "I couldn't read that phone number.";
+    const state = this.load();
+    if (!state) return "That game table no longer exists.";
+    this.ctx.storage.sql.exec("DELETE FROM sms_subscriptions WHERE phone_number = ?", normalized);
+    return `Unsubscribed from ${state.id}.`;
   }
 
   async act(playerId: string, token: string, action: TurnAction): Promise<RoomResult> {
@@ -777,12 +856,17 @@ export class GameRoom extends DurableObject<Env> {
 
     const state = this.load();
     if (!state) return new Response("Room not found.", { status: 404 });
+    const linkValue = decodePlayerLink(new URL(request.url).searchParams.get("player"), state.id);
+    const linkSession = validators.sessionCredentials(linkValue) && linkValue.roomCode === state.id
+      ? linkValue
+      : undefined;
     const cookieValue = decodeSessionCookie(request.headers.get("Cookie") ?? "", state.id);
     const cookieSession = validators.sessionCredentials(cookieValue) && cookieValue.roomCode === state.id
       ? cookieValue
       : undefined;
-    const playerId = cookieSession?.playerId ?? "";
-    const token = cookieSession?.token ?? "";
+    const session = linkSession ?? cookieSession;
+    const playerId = session?.playerId ?? "";
+    const token = session?.token ?? "";
     const player = state.players.find((candidate) => candidate.id === playerId);
     if (!player || !(await this.authenticated(token, player))) {
       return new Response("That player link is not valid.", { status: 401 });
