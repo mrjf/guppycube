@@ -67,7 +67,6 @@ export function Home({ initialRoom = "", onEnter, onShowRules }: HomeProps) {
 
       <section className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">The classic tile-table game, online</p>
           <h1>Make a run<br /><em>for it.</em></h1>
           <p className="hero-lede">Build clever sets. Break the table wide open. Play live tonight—or take your turn whenever.</p>
           <div className="hero-notes">
@@ -148,11 +147,9 @@ export function Home({ initialRoom = "", onEnter, onShowRules }: HomeProps) {
           <span className="poster-tile poster-coral">7</span>
           <span className="poster-tile poster-sun">8</span>
           <span className="poster-tile poster-ocean">9</span>
-          <span className="poster-tile poster-joker"><CatFaceIcon /></span>
+          <span className="poster-tile poster-wildcard"><CatFaceIcon /></span>
         </div>
       </section>
-
-      <footer className="home-footer"><span>Built for kitchen-table rivalries.</span><span>Original implementation · Familiar rules</span></footer>
     </main>
   );
 }

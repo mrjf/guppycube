@@ -1,0 +1,30 @@
+[Format "guppycube-transcript/1"]
+[Record "0b9f0a2e-6c1d-4f2a-9b7e-3d5c8a1f4e21"]
+[Table "dorky-puppet-spam"]
+[Origin "https://snagsby.com/guppycube"]
+[Mode "realtime"]
+[Seats "Ada, Bo, Guppy Bot (computer)"]
+[Order "Bo, Guppy Bot, Ada"]
+[ShuffleCommit "47bc6cc7b55bb1e3fad38a77a82b89f5d0fbf16390b3c737f301838213e4a263"]
+[Result "Ada went out; Ada +132, Guppy Bot -60, Bo -72"]
+{Ada: Short one. Worth replaying for the wildcard group on turn 1.}
+
+Deal Bo: i11 s10 s7 i6 c3 s1 c4 c12 c1 s12 o11 * c2 i10
+Deal Guppy Bot: s6 i13 o6 s11 c2 s4 s5 s11 c13 o10 c7 o3 o1 i9
+Deal Ada: o3 o9 o11 c8 c6 o12 c3 c7 * o12 s1 c5 c1 o1
+
+1. Bo opens 46: +[c1 c2 c3 c4] +[c12 s12 *] !? {Bo: Big opening (46) that spends the wildcard on turn 1 — but every 30+ opening from this rack needs it.} ( 1. Bo: +[c12 s12 *] {Bo: The other way to open: just this meld for 36, holding the coral run back to extend later.} )
+2. Guppy Bot draws c4
+3. Ada opens 71: +[c5 c6 c7 c8] +[s1 c1 o1] +[o9 * o11 o12]
+4. Bo draws i10
+5. Guppy Bot draws s13
+6. Ada: -[c12 s12 *] +[o12 c12 s12 *]
+7. Bo draws s13 (timeout) ? {Bo: Lost this turn to the clock while hunting for a rearrangement that was never there.}
+8. Guppy Bot opens 54: +[i13 c13 s13] +[s4 s5 s6]
+9. Ada draws i3
+10. Bo: -[s4 s5 s6] +[s4 s5 s6 s7]
+11. Guppy Bot: -[c5 c6 c7 c8] +[c4 c5 c6 c7 c8]
+12. Ada out: +[o3 c3 i3] {guppycube-review: {"rackValue":{"p1":0,"p2":72,"p3":60}}}
+
+Left on rack Bo: i11 s10 i6 s1 o11 i10 i10 s13 (72)
+Left on rack Guppy Bot: o6 s11 c2 s11 o10 c7 o3 o1 i9 (60)

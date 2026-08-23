@@ -23,7 +23,7 @@ function groupCandidates(context: ComputerTurnContext): MeldCandidate[] {
     const tileIds = TILE_COLORS.flatMap((color) => {
       const tileId = context.rack.find((id) => {
         const tile = context.tiles[id];
-        if (!tile || tile.joker) return false;
+        if (!tile || tile.wildcard) return false;
         return tile.color === color && tile.value === value;
       });
       return tileId ? [tileId] : [];
@@ -39,7 +39,7 @@ function runCandidates(context: ComputerTurnContext): MeldCandidate[] {
     const tileIdByValue = new Map<number, string>();
     for (const tileId of context.rack) {
       const tile = context.tiles[tileId];
-      if (tile && !tile.joker && tile.color === color && tile.value !== null && !tileIdByValue.has(tile.value)) {
+      if (tile && !tile.wildcard && tile.color === color && tile.value !== null && !tileIdByValue.has(tile.value)) {
         tileIdByValue.set(tile.value, tileId);
       }
     }

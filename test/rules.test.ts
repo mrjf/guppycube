@@ -3,20 +3,42 @@ import {
   createTileSet,
   hasLegalMove,
   rackPenalty,
-  resolveJokerAssignments,
+  resolveWildcardAssignments,
   validateMeld,
   validateTurn,
 } from "../src/shared/rules";
+import {
+  TILE_COLORS,
+  TILE_COPIES_PER_NUMBER_AND_COLOR,
+  TILE_NUMBER_MAX,
+  TILE_NUMBER_MIN,
+  TILE_SET_SIZE,
+  WILDCARD_TILE_COUNT,
+} from "../src/shared/types";
 import type { Meld } from "../src/shared/types";
 
 const tiles = createTileSet();
 const meld = (id: string, tileIds: string[]): Meld => ({ id, tileIds });
 
 describe("tile set", () => {
-  it("contains the standard 106 tiles", () => {
-    expect(Object.keys(tiles)).toHaveLength(106);
-    expect(Object.values(tiles).filter((tile) => tile.joker)).toHaveLength(2);
-    expect(Object.values(tiles).filter((tile) => tile.color === "coral" && tile.value === 13)).toHaveLength(2);
+  it("uses the configured 106-tile distribution", () => {
+    const allTiles = Object.values(tiles);
+    expect(allTiles).toHaveLength(TILE_SET_SIZE);
+
+    for (const color of TILE_COLORS) {
+      for (let value = TILE_NUMBER_MIN; value <= TILE_NUMBER_MAX; value += 1) {
+        expect(allTiles.filter((tile) => tile.color === color && tile.value === value)).toHaveLength(
+          TILE_COPIES_PER_NUMBER_AND_COLOR,
+        );
+      }
+    }
+
+    const wildcards = allTiles.filter((tile) => tile.wildcard);
+    expect(wildcards).toHaveLength(WILDCARD_TILE_COUNT);
+    expect(wildcards).toEqual([
+      { id: "wildcard-1", color: null, value: null, wildcard: true },
+      { id: "wildcard-2", color: null, value: null, wildcard: true },
+    ]);
   });
 });
 
@@ -30,36 +52,36 @@ describe("meld validation", () => {
     expect(validateMeld(["coral-8-1", "coral-8-2", "ocean-8-1"], tiles).valid).toBe(false);
   });
 
-  it("accepts ordered runs and positional jokers", () => {
+  it("accepts ordered runs and positional wildcards", () => {
     expect(validateMeld(["ocean-4-1", "ocean-5-1", "ocean-6-1", "ocean-7-1"], tiles)).toMatchObject({ valid: true, kind: "run", points: 22 });
-    expect(validateMeld(["ocean-10-1", "joker-1", "ocean-12-1"], tiles)).toMatchObject({ valid: true, kind: "run", points: 33 });
+    expect(validateMeld(["ocean-10-1", "wildcard-1", "ocean-12-1"], tiles)).toMatchObject({ valid: true, kind: "run", points: 33 });
   });
 
   it("rejects unordered and out-of-range runs", () => {
     expect(validateMeld(["ocean-4-1", "ocean-6-1", "ocean-5-1"], tiles).valid).toBe(false);
-    expect(validateMeld(["ocean-12-1", "ocean-13-1", "joker-1"], tiles).valid).toBe(false);
-    expect(validateMeld(["joker-1", "ocean-1-1", "ocean-2-1"], tiles).valid).toBe(false);
+    expect(validateMeld(["ocean-12-1", "ocean-13-1", "wildcard-1"], tiles).valid).toBe(false);
+    expect(validateMeld(["wildcard-1", "ocean-1-1", "ocean-2-1"], tiles).valid).toBe(false);
   });
 
-  it("scores a joker by the value it represents", () => {
-    expect(validateMeld(["coral-7-1", "joker-1", "ocean-7-1"], tiles)).toMatchObject({ valid: true, kind: "group", points: 21 });
+  it("scores a wildcard by the value it represents", () => {
+    expect(validateMeld(["coral-7-1", "wildcard-1", "ocean-7-1"], tiles)).toMatchObject({ valid: true, kind: "group", points: 21 });
   });
 
-  it("resolves the exact tile represented by a joker in a run", () => {
-    expect(resolveJokerAssignments(["ocean-7-1", "joker-1", "ocean-9-1"], tiles)).toEqual({
-      "joker-1": { value: 8, color: "ocean", possibleColors: ["ocean"] },
+  it("resolves the exact tile represented by a wildcard in a run", () => {
+    expect(resolveWildcardAssignments(["ocean-7-1", "wildcard-1", "ocean-9-1"], tiles)).toEqual({
+      "wildcard-1": { value: 8, color: "ocean", possibleColors: ["ocean"] },
     });
   });
 
-  it("shows both legal replacement colors for a joker in a group of three", () => {
-    expect(resolveJokerAssignments(["coral-7-1", "sun-7-1", "joker-1"], tiles)).toEqual({
-      "joker-1": { value: 7, color: null, possibleColors: ["ocean", "ink"] },
+  it("shows both legal replacement colors for a wildcard in a group of three", () => {
+    expect(resolveWildcardAssignments(["coral-7-1", "sun-7-1", "wildcard-1"], tiles)).toEqual({
+      "wildcard-1": { value: 7, color: null, possibleColors: ["ocean", "ink"] },
     });
   });
 
   it("resolves the one missing color in a group of four", () => {
-    expect(resolveJokerAssignments(["coral-7-1", "sun-7-1", "ocean-7-1", "joker-1"], tiles)).toEqual({
-      "joker-1": { value: 7, color: "ink", possibleColors: ["ink"] },
+    expect(resolveWildcardAssignments(["coral-7-1", "sun-7-1", "ocean-7-1", "wildcard-1"], tiles)).toEqual({
+      "wildcard-1": { value: 7, color: "ink", possibleColors: ["ink"] },
     });
   });
 });
@@ -164,11 +186,11 @@ describe("turn validation", () => {
     expect(validateTurn({ previousBoard: [old], proposedBoard: [proposed], rack: ["ink-5-1"], opened: true, tiles }).valid).toBe(false);
   });
 
-  it("allows an opened player to free and immediately replay a table joker", () => {
-    const old = meld("old", ["ocean-7-1", "joker-1", "ocean-9-1"]);
+  it("allows an opened player to free and immediately replay a table wildcard", () => {
+    const old = meld("old", ["ocean-7-1", "wildcard-1", "ocean-9-1"]);
     const proposed = [
       meld("repaired", ["ocean-7-1", "ocean-8-1", "ocean-9-1"]),
-      meld("joker-replayed", ["coral-5-1", "sun-5-1", "joker-1"]),
+      meld("wildcard-replayed", ["coral-5-1", "sun-5-1", "wildcard-1"]),
     ];
     expect(validateTurn({
       previousBoard: [old],
@@ -179,11 +201,11 @@ describe("turn validation", () => {
     }).valid).toBe(true);
   });
 
-  it("does not allow a player to retrieve a table joker before opening", () => {
-    const old = meld("old", ["ocean-7-1", "joker-1", "ocean-9-1"]);
+  it("does not allow a player to retrieve a table wildcard before opening", () => {
+    const old = meld("old", ["ocean-7-1", "wildcard-1", "ocean-9-1"]);
     const proposed = [
       meld("repaired", ["ocean-7-1", "ocean-8-1", "ocean-9-1"]),
-      meld("joker-replayed", ["coral-10-1", "sun-10-1", "joker-1"]),
+      meld("wildcard-replayed", ["coral-10-1", "sun-10-1", "wildcard-1"]),
     ];
     expect(validateTurn({
       previousBoard: [old],
@@ -194,8 +216,8 @@ describe("turn validation", () => {
     }).valid).toBe(false);
   });
 
-  it("requires a retrieved joker to remain in a valid table meld", () => {
-    const old = meld("old", ["ocean-7-1", "joker-1", "ocean-9-1"]);
+  it("requires a retrieved wildcard to remain in a valid table meld", () => {
+    const old = meld("old", ["ocean-7-1", "wildcard-1", "ocean-9-1"]);
     const proposed = meld("repaired", ["ocean-7-1", "ocean-8-1", "ocean-9-1"]);
     expect(validateTurn({
       previousBoard: [old],
@@ -205,14 +227,14 @@ describe("turn validation", () => {
       tiles,
     })).toMatchObject({
       valid: false,
-      reason: "A retrieved joker must be played in another valid meld during the same turn.",
+      reason: "A retrieved wildcard must be played in another valid meld during the same turn.",
     });
   });
 });
 
 describe("rack scoring", () => {
-  it("counts jokers as 30 points", () => {
-    expect(rackPenalty(["joker-1", "coral-13-1", "sun-2-1"], tiles)).toBe(45);
+  it("counts wildcards as 30 points", () => {
+    expect(rackPenalty(["wildcard-1", "coral-13-1", "sun-2-1"], tiles)).toBe(45);
   });
 });
 

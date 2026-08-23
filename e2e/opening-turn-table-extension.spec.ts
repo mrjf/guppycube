@@ -43,12 +43,13 @@ interface GameState {
   players: PlayerState[];
   myPlayerId: string;
   myRack: string[];
+  turnDraft: Meld[] | null;
   myTurnDraft: Meld[] | null;
   tiles: Record<string, {
     id: string;
     color: "coral" | "sun" | "ocean" | "ink";
     value: number;
-    joker: false;
+    wildcard: false;
   }>;
   history: Array<{
     id: string;
@@ -61,6 +62,7 @@ interface GameState {
   assistPolicy: {
     "no-move-alert": "default-on";
     "auto-draw": "default-off";
+    "rack-meld-highlights": "default-off";
   };
   enabledAssists: string[];
   noMovePossible: boolean;
@@ -73,7 +75,7 @@ interface MockController {
 }
 
 function tile(id: string, color: "coral" | "sun" | "ocean" | "ink", value: number) {
-  return { id, color, value, joker: false as const };
+  return { id, color, value, wildcard: false as const };
 }
 
 function initialState(): GameState {
@@ -131,6 +133,7 @@ function initialState(): GameState {
     ],
     myPlayerId: targetPlayerId,
     myRack,
+    turnDraft: null,
     myTurnDraft: null,
     tiles: Object.fromEntries(allTiles.map((entry) => [entry.id, entry])),
     history: [
@@ -153,6 +156,7 @@ function initialState(): GameState {
     assistPolicy: {
       "no-move-alert": "default-on",
       "auto-draw": "default-off",
+      "rack-meld-highlights": "default-off",
     },
     enabledAssists: [],
     noMovePossible: false,

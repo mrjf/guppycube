@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { makeTableName } from "../src/server/table-names";
+import {
+  makeTableName,
+  TABLE_NAME_COMBINATION_COUNT,
+} from "../src/server/table-names";
 import {
   formatTableNameInput,
   isTableName,
@@ -7,6 +10,10 @@ import {
 } from "../src/shared/table-name";
 
 describe("table names", () => {
+  test("has millions of possible generated names", () => {
+    expect(TABLE_NAME_COMBINATION_COUNT).toBe(256 ** 3);
+  });
+
   test("generates three lowercase words joined by hyphens", () => {
     for (let index = 0; index < 256; index += 1) {
       expect(makeTableName()).toMatch(/^[a-z]+-[a-z]+-[a-z]+$/);

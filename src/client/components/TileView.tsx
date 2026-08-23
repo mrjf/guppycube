@@ -1,5 +1,5 @@
 import type { DragEvent, FocusEvent, KeyboardEvent, MouseEvent, PointerEvent } from "react";
-import type { JokerAssignment } from "../../shared/rules";
+import type { WildcardAssignment } from "../../shared/rules";
 import type { Tile } from "../../shared/types";
 import { CatFaceIcon } from "./CatFaceIcon";
 
@@ -8,9 +8,9 @@ interface TileViewProps {
   selected?: boolean;
   compact?: boolean;
   disabled?: boolean;
-  recentlyPlayed?: boolean;
-  jokerAssignment?: JokerAssignment;
-  jokerOnTable?: boolean;
+  newActivity?: boolean;
+  wildcardAssignment?: WildcardAssignment;
+  wildcardOnTable?: boolean;
   keyShortcuts?: string;
   onClick?: (event: MouseEvent<HTMLButtonElement>) => void;
   onDoubleClick?: () => void;
@@ -31,9 +31,9 @@ export function TileView({
   selected = false,
   compact = false,
   disabled = false,
-  recentlyPlayed = false,
-  jokerAssignment,
-  jokerOnTable = false,
+  newActivity = false,
+  wildcardAssignment,
+  wildcardOnTable = false,
   keyShortcuts,
   onClick,
   onDoubleClick,
@@ -48,20 +48,20 @@ export function TileView({
   onPointerLeave,
   onContextMenu,
 }: TileViewProps) {
-  const jokerColors = jokerAssignment?.possibleColors ?? [];
-  const jokerDescription = jokerAssignment
-    ? jokerAssignment.color
-      ? `${jokerAssignment.color} ${jokerAssignment.value}`
-      : `${jokerAssignment.value} in ${jokerColors.join(" or ")}`
+  const wildcardColors = wildcardAssignment?.possibleColors ?? [];
+  const wildcardDescription = wildcardAssignment
+    ? wildcardAssignment.color
+      ? `${wildcardAssignment.color} ${wildcardAssignment.value}`
+      : `${wildcardAssignment.value} in ${wildcardColors.join(" or ")}`
     : null;
 
   return (
     <button
       type="button"
       data-tile-id={tile.id}
-      className={`tile tile-${tile.color ?? "joker"} ${jokerAssignment?.color ? `joker-as-${jokerAssignment.color}` : ""} ${selected ? "is-selected" : ""} ${compact ? "is-compact" : ""} ${recentlyPlayed ? "is-remote-play" : ""}`}
-      aria-label={tile.joker ? jokerDescription ? `Joker representing ${jokerDescription}` : jokerOnTable ? "Unassigned joker" : "Joker tile" : `${tile.color} ${tile.value}`}
-      title={tile.joker ? jokerDescription ? `Joker = ${jokerDescription}` : jokerOnTable ? "Place this joker in a valid group or run to assign it" : "Joker" : undefined}
+      className={`tile tile-${tile.color ?? "wildcard"} ${wildcardAssignment?.color ? `wildcard-as-${wildcardAssignment.color}` : ""} ${selected ? "is-selected" : ""} ${compact ? "is-compact" : ""} ${newActivity ? "is-new-activity" : ""}`}
+      aria-label={tile.wildcard ? wildcardDescription ? `Wildcard representing ${wildcardDescription}` : wildcardOnTable ? "Unassigned wildcard" : "Wildcard tile" : `${tile.color} ${tile.value}`}
+      title={tile.wildcard ? wildcardDescription ? `Wildcard = ${wildcardDescription}` : wildcardOnTable ? "Place this wildcard in a valid group or run to assign it" : "Wildcard" : undefined}
       aria-pressed={selected}
       aria-keyshortcuts={keyShortcuts}
       disabled={disabled}
@@ -80,17 +80,17 @@ export function TileView({
       onPointerLeave={onPointerLeave}
       onContextMenu={onContextMenu}
     >
-      <span className="tile-corner">{tile.joker ? "★" : tile.value}</span>
+      <span className="tile-corner">{tile.wildcard ? "★" : tile.value}</span>
       <span className="tile-value">
-        {tile.joker
-          ? jokerAssignment
-            ? <><b className="joker-number">{jokerAssignment.value}</b><CatFaceIcon className="joker-cat joker-cat-badge" /></>
-            : <CatFaceIcon className="joker-cat" />
+        {tile.wildcard
+          ? wildcardAssignment
+            ? <><b className="wildcard-number">{wildcardAssignment.value}</b><CatFaceIcon className="wildcard-cat wildcard-cat-badge" /></>
+            : <CatFaceIcon className="wildcard-cat" />
           : tile.value}
       </span>
-      {tile.joker && jokerAssignment ? (
-        <span className="joker-colors" aria-hidden="true">
-          {jokerColors.map((color) => <i className={`joker-color joker-color-${color}`} key={color} />)}
+      {tile.wildcard && wildcardAssignment ? (
+        <span className="wildcard-colors" aria-hidden="true">
+          {wildcardColors.map((color) => <i className={`wildcard-color wildcard-color-${color}`} key={color} />)}
         </span>
       ) : <span className="tile-pip" aria-hidden="true" />}
     </button>

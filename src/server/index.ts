@@ -138,6 +138,12 @@ function isLocalRequest(request: Request): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
+function localTurnDurationOverride(request: Request): number | undefined {
+  if (!isLocalRequest(request)) return undefined;
+  const value = Number(request.headers.get("X-Guppycube-Turn-Duration-Ms"));
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 app.get("/api/health", (context) => {
   const body: HealthResponse = {
     ok: true,
@@ -188,6 +194,7 @@ app.post("/api/games", async (context) => {
         input satisfies CreateGameInput,
         playerId,
         tokenHash,
+        localTurnDurationOverride(context.req.raw),
       ),
     );
     if (result.ok) {

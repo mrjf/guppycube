@@ -14,6 +14,7 @@ const initialBoardTileIds = ["coral-7-1", "sun-7-1", "ocean-7-1"];
 const remotelyPlayedTileIds = ["ink-8-1", "ink-9-1", "ink-10-1"];
 const locallyCommittedTileIds = ["sun-10-1", "sun-11-1", "sun-12-1"];
 const localDraftTileId = "coral-2-1";
+const newlyDrawnRackTileId = "sun-1-2";
 
 interface ControlledGame {
   initialState: PublicGameState;
@@ -26,7 +27,7 @@ function numberedTile(id: string): Tile {
     id,
     color: color as TileColor,
     value: Number(value),
-    joker: false,
+    wildcard: false,
   };
 }
 
@@ -38,6 +39,7 @@ function createState(remoteIsComputer: boolean): PublicGameState {
     ...locallyCommittedTileIds,
     localDraftTileId,
     "ocean-1-1",
+    newlyDrawnRackTileId,
   ];
   const tiles = Object.fromEntries(tileIds.map((tileId) => [tileId, numberedTile(tileId)]));
   const myRack = [localDraftTileId, ...locallyCommittedTileIds, "ocean-1-1"];
@@ -83,6 +85,7 @@ function createState(remoteIsComputer: boolean): PublicGameState {
     ],
     myPlayerId: viewerId,
     myRack,
+    turnDraft: null,
     myTurnDraft: null,
     tiles,
     history: [
@@ -105,6 +108,7 @@ function createState(remoteIsComputer: boolean): PublicGameState {
     assistPolicy: {
       "no-move-alert": "default-on",
       "auto-draw": "default-off",
+      "rack-meld-highlights": "default-off",
     },
     enabledAssists: [],
     noMovePossible: false,
@@ -216,6 +220,32 @@ function stateWithLocalCommit(remotePlay: PublicGameState): PublicGameState {
   };
 }
 
+function stateWithLocalDraw(initialState: PublicGameState): PublicGameState {
+  const now = Date.now();
+  return {
+    ...initialState,
+    version: initialState.version + 1,
+    updatedAt: now,
+    turnStartedAt: now,
+    turnDeadline: now + 120_000,
+    currentPlayerId: remotePlayerId,
+    myRack: [...initialState.myRack, newlyDrawnRackTileId],
+    players: initialState.players.map((player) => player.id === viewerId
+      ? { ...player, rackCount: player.rackCount + 1, rackTileIds: [...player.rackTileIds, newlyDrawnRackTileId] }
+      : player),
+    history: [
+      ...initialState.history,
+      {
+        id: "event-live-local-draw",
+        at: now,
+        playerId: viewerId,
+        kind: "drew",
+        message: "Viewing player drew a tile.",
+      },
+    ],
+  };
+}
+
 for (const remotePlayer of [
   { label: "Guppy Bot", isComputer: true },
   { label: "another user", isComputer: false },
@@ -225,14 +255,14 @@ for (const remotePlayer of [
     const tableTiles = page.locator(".table-surface .tile");
 
     await expect(tableTiles).toHaveCount(initialBoardTileIds.length);
-    await expect(page.locator(".tile.is-remote-play")).toHaveCount(0);
+    await expect(page.locator(".tile.is-new-activity")).toHaveCount(0);
     await expect(page.locator(".player-action-flash")).toHaveCount(0);
 
     await page.locator(`.rack .tile[data-tile-id="${localDraftTileId}"]`).dblclick();
     const locallyDraftedTile = page.locator(`.table-surface .tile[data-tile-id="${localDraftTileId}"]`);
     await expect(locallyDraftedTile).toBeVisible();
-    await expect(locallyDraftedTile).not.toHaveClass(/\bis-remote-play\b/);
-    await expect(page.locator(".tile.is-remote-play")).toHaveCount(0);
+    await expect(locallyDraftedTile).not.toHaveClass(/\bis-new-activity\b/);
+    await expect(page.locator(".tile.is-new-activity")).toHaveCount(0);
     await page.getByRole("button", { name: "Reset turn" }).click();
     await expect(locallyDraftedTile).toHaveCount(0);
 
@@ -240,23 +270,25 @@ for (const remotePlayer of [
     controlled.sendState(remoteTurn);
     const remoteName = remoteTurn.players.find((player) => player.id === remotePlayerId)!.name;
     await expect(page.locator(".turn-clock small")).toHaveText(`${remoteName}'s turn`);
-    await expect(page.locator(".tile.is-remote-play")).toHaveCount(0);
+    await expect(page.locator(".tile.is-new-activity")).toHaveCount(0);
 
     const remotePlay = stateWithRemotePlay(remoteTurn);
     controlled.sendState(remotePlay);
-    const animatedTiles = page.locator(".table-surface .tile.is-remote-play");
+    const animatedTiles = page.locator(".table-surface .tile.is-new-activity");
     await expect(tableTiles).toHaveCount(initialBoardTileIds.length + remotelyPlayedTileIds.length);
     await expect(animatedTiles).toHaveCount(remotelyPlayedTileIds.length);
     for (const tileId of remotelyPlayedTileIds) {
-      await expect(page.locator(`.table-surface .tile.is-remote-play[data-tile-id="${tileId}"]`)).toBeVisible();
+      await expect(page.locator(`.table-surface .tile.is-new-activity[data-tile-id="${tileId}"]`)).toBeVisible();
     }
     for (const tileId of initialBoardTileIds) {
-      await expect(page.locator(`.table-surface .tile[data-tile-id="${tileId}"]`)).not.toHaveClass(/\bis-remote-play\b/);
+      await expect(page.locator(`.table-surface .tile[data-tile-id="${tileId}"]`)).not.toHaveClass(/\bis-new-activity\b/);
     }
     expect(await animatedTiles.first().evaluate((tile) => ({
       name: getComputedStyle(tile).animationName,
       duration: getComputedStyle(tile).animationDuration,
-    }))).toEqual({ name: "remote-play-fade-in", duration: "1.15s" });
+    }))).toEqual({ name: "new-activity-fade-in", duration: "1.35s" });
+    await expect(page.locator(".meld.is-new-activity")).toHaveCount(1);
+    await expect(page.locator(".meld.is-new-activity .meld-activity-label")).toHaveCount(0);
 
     controlled.sendState(stateWithLocalCommit(remotePlay));
     await expect(tableTiles).toHaveCount(
@@ -265,7 +297,19 @@ for (const remotePlayer of [
     for (const tileId of locallyCommittedTileIds) {
       const locallyCommittedTile = page.locator(`.table-surface .tile[data-tile-id="${tileId}"]`);
       await expect(locallyCommittedTile).toBeVisible();
-      await expect(locallyCommittedTile).not.toHaveClass(/\bis-remote-play\b/);
+      await expect(locallyCommittedTile).not.toHaveClass(/\bis-new-activity\b/);
     }
+  });
+
+  test(`uses the same cue for a new tile on your rack while playing ${remotePlayer.label}`, async ({ page }) => {
+    const controlled = await openControlledGame(page, remotePlayer.isComputer);
+
+    controlled.sendState(stateWithLocalDraw(controlled.initialState));
+
+    const newRackTile = page.locator(`.rack .tile[data-tile-id="${newlyDrawnRackTileId}"]`);
+    await expect(newRackTile).toBeVisible();
+    await expect(newRackTile).toHaveClass(/\bis-new-activity\b/);
+    expect(await newRackTile.evaluate((tile) => getComputedStyle(tile).animationName)).toBe("new-activity-fade-in");
+    await expect(page.locator(".player-card.is-me .player-action-flash")).toContainText("drew a tile");
   });
 }

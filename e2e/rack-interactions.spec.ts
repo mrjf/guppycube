@@ -23,7 +23,7 @@ interface Tile {
   id: string;
   color: TileColor | null;
   value: number | null;
-  joker: boolean;
+  wildcard: boolean;
 }
 
 interface GameState {
@@ -83,7 +83,7 @@ function meldKind(tileIds: string[], tiles: Record<string, Tile>): "group" | "ru
   if (meldTiles.length !== tileIds.length) return null;
 
   if (meldTiles.length >= 3 && meldTiles.length <= 4) {
-    const numbered = meldTiles.filter((tile) => !tile.joker);
+    const numbered = meldTiles.filter((tile) => !tile.wildcard);
     const value = numbered[0]?.value;
     const usedColors = numbered.map((tile) => tile.color);
     if (
@@ -99,7 +99,7 @@ function meldKind(tileIds: string[], tiles: Record<string, Tile>): "group" | "ru
   if (meldTiles.length < 3 || meldTiles.length > 13) return null;
   const numbered = meldTiles
     .map((tile, index) => ({ tile, index }))
-    .filter(({ tile }) => !tile.joker);
+    .filter(({ tile }) => !tile.wildcard);
   const first = numbered[0];
   if (!first?.tile.color || first.tile.value === null) return null;
   const start = first.tile.value - first.index;
@@ -248,7 +248,7 @@ async function createRackGame(): Promise<RackGame> {
   throw new Error("Eight four-player deals did not contain a testable sorted run/group and singleton.");
 }
 
-test("uses a two-level rack and holds a sorted linked meld for one placement", async ({ browser }) => {
+test("gates sorted rack meld underlines behind an off-by-default assist", async ({ browser }) => {
   test.setTimeout(60_000);
   const rackGame = await createRackGame();
   let context: BrowserContext | undefined;
@@ -294,8 +294,22 @@ test("uses a two-level rack and holds a sorted linked meld for one placement", a
     expect(displayedTileIds).toEqual(rackGame.linked.sortedRack);
 
     const meldSlots = page.locator('.rack-slot[data-rack-meld="true"]');
+    await expect(meldSlots).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Assists" }).click();
+    const rackMeldHighlights = page.locator(".assist-panel").getByRole("switch", { name: "Rack meld highlights" });
+    await expect(rackMeldHighlights).not.toBeChecked();
+    await rackMeldHighlights.click();
+    await expect(rackMeldHighlights).toBeChecked();
     await expect(meldSlots).not.toHaveCount(0);
     expect(await meldSlots.locator(".tile").count()).toBeGreaterThanOrEqual(3);
+
+    await rackMeldHighlights.click();
+    await expect(rackMeldHighlights).not.toBeChecked();
+    await expect(meldSlots).toHaveCount(0);
+    await rackMeldHighlights.click();
+    await expect(rackMeldHighlights).toBeChecked();
+    await page.getByRole("button", { name: "Assists" }).click();
 
     const firstSelectableId = rackGame.linked.heldId;
     const secondSelectableId = rackGame.linked.singletonId;
@@ -323,10 +337,29 @@ test("uses a two-level rack and holds a sorted linked meld for one placement", a
     await secondSelectable.click();
     await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(0);
 
-    const heldTile = page.locator(`.rack .tile[data-tile-id="${rackGame.linked.heldId}"]`);
+    const heldTileId = rackGame.linked.tileIds[0]!;
+    const nextHeldTileId = rackGame.linked.tileIds[1]!;
+    const thirdHeldTileId = rackGame.linked.tileIds[2]!;
+    const heldTile = page.locator(`.rack .tile[data-tile-id="${heldTileId}"]`);
     await heldTile.dispatchEvent("pointerdown", { pointerType: "mouse", button: 0, isPrimary: true });
     await page.waitForTimeout(550);
+    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(1);
+    await expect(heldTile).toHaveAttribute("aria-pressed", "true");
+
+    await page.waitForTimeout(375);
+    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(2);
+    await expect(page.locator(`.rack .tile[data-tile-id="${nextHeldTileId}"]`)).toHaveAttribute("aria-pressed", "true");
+
+    await page.waitForTimeout(375);
+    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(3);
+    await expect(page.locator(`.rack .tile[data-tile-id="${thirdHeldTileId}"]`)).toHaveAttribute("aria-pressed", "true");
     await heldTile.dispatchEvent("pointerup", { pointerType: "mouse", button: 0, isPrimary: true });
+    await page.waitForTimeout(400);
+    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(3);
+
+    await page.keyboard.press("Escape");
+    await heldTile.focus();
+    await page.keyboard.press("Shift+Enter");
 
     await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(rackGame.linked.tileIds.length);
     for (const tileId of rackGame.linked.tileIds) {
@@ -361,7 +394,7 @@ test("uses a two-level rack and holds a sorted linked meld for one placement", a
   }
 });
 
-test("turns off autosorting, moves and swaps fixed rack slots, persists the layout, and resumes both sorts", async ({ browser }) => {
+test("keeps manual slots at a fixed pitch, rearranges while waiting, persists the layout, and resumes both sorts", async ({ browser }) => {
   test.setTimeout(60_000);
   const rackGame = await createRackGame();
   let context: BrowserContext | undefined;
@@ -371,29 +404,33 @@ test("turns off autosorting, moves and swaps fixed rack slots, persists the layo
     await page.goto(`${appUrl}/room/${rackGame.target.session.roomCode}`);
     await expect(page.getByText("Your turn", { exact: true })).toBeVisible();
 
-    const offButton = page.getByRole("button", { name: "Off", exact: true });
     const colorButton = page.getByRole("button", { name: "Color → 123", exact: true });
     const numberButton = page.getByRole("button", { name: "123 → Color", exact: true });
-    await expect(colorButton).toHaveAttribute("aria-pressed", "true");
-    await expect(offButton).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
 
-    await offButton.click();
-    await expect(offButton).toHaveAttribute("aria-pressed", "true");
+    const initiallySortedTile = page.locator(".rack .tile").first();
+    const activeTurnTarget = page.locator(".rack-slot").last();
+    await dragRackTileToSlot(page, initiallySortedTile, activeTurnTarget);
+    await expect(page.getByRole("grid", { name: "Your rack, manual arrangement" })).toBeVisible();
     await expect(colorButton).toHaveAttribute("aria-pressed", "false");
     await expect(numberButton).toHaveAttribute("aria-pressed", "false");
-    await expect(page.getByRole("grid", { name: "Your rack, manual arrangement" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Off", exact: true })).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => localStorage.getItem("guppycube:rack-autosort")))
       .toBe("false");
 
     const rows = page.locator(".rack [data-rack-row]");
     await expect(rows).toHaveCount(2);
     const rowGeometry = await rows.evaluateAll((rackRows) => rackRows.map((row) => ({
+      left: row.getBoundingClientRect().left,
+      right: row.getBoundingClientRect().right,
       slotIndices: [...row.querySelectorAll<HTMLElement>(":scope > .rack-slot")]
         .map((slot) => Number.parseInt(slot.dataset.rackSlot ?? "", 10)),
       slotLefts: [...row.querySelectorAll<HTMLElement>(":scope > .rack-slot")]
         .map((slot) => slot.getBoundingClientRect().left),
+      slotRights: [...row.querySelectorAll<HTMLElement>(":scope > .rack-slot")]
+        .map((slot) => slot.getBoundingClientRect().right),
     })));
-    expect(rowGeometry[0]!.slotIndices.length).toBeGreaterThanOrEqual(7);
+    expect(rowGeometry[0]!.slotIndices.length).toBeGreaterThanOrEqual(14);
     expect(rowGeometry[1]!.slotIndices).toHaveLength(rowGeometry[0]!.slotIndices.length);
     expect(rowGeometry[0]!.slotIndices).toEqual(
       Array.from({ length: rowGeometry[0]!.slotIndices.length }, (_, index) => index * 2),
@@ -405,6 +442,14 @@ test("turns off autosorting, moves and swaps fixed rack slots, persists the layo
       expect(Math.abs(left - rowGeometry[1]!.slotLefts[index]!), `column ${index + 1} should align across rows`)
         .toBeLessThan(2);
     });
+    for (const row of rowGeometry) {
+      const gaps = row.slotLefts.slice(1).map((left, index) => left - row.slotRights[index]!);
+      expect(Math.max(...gaps) - Math.min(...gaps), "manual slot gaps should stay fixed across the row")
+        .toBeLessThan(2);
+    }
+    const rowGaps = rowGeometry[0]!.slotLefts.slice(1).map((left, index) => left - rowGeometry[0]!.slotRights[index]!);
+    const secondRowGaps = rowGeometry[1]!.slotLefts.slice(1).map((left, index) => left - rowGeometry[1]!.slotRights[index]!);
+    expect(rowGaps).toEqual(secondRowGaps);
 
     const tileMovedToTableId = await page.locator(".rack .tile").first().getAttribute("data-tile-id");
     expect(tileMovedToTableId).not.toBeNull();
@@ -449,7 +494,15 @@ test("turns off autosorting, moves and swaps fixed rack slots, persists the layo
     );
     await expect(page.locator(`.rack-slot[data-rack-slot="${occupiedDestinationIndex}"] .tile[data-tile-id="${movedTileId}"]`))
       .toBeVisible();
-    await expect(page.locator(`.rack-slot[data-rack-slot="${emptyTargetIndex}"] .tile[data-tile-id="${displacedTileId}"]`))
+    const pushedSnapshot = await rackSlotSnapshot(page);
+    const pushedTileIndex = pushedSnapshot.indexOf(displacedTileId!);
+    expect(pushedTileIndex).toBeGreaterThanOrEqual(0);
+    expect(pushedTileIndex % 2).toBe(Number(occupiedDestinationIndex) % 2);
+    expect(Math.floor(pushedTileIndex / 2)).toBeGreaterThan(Math.floor(Number(occupiedDestinationIndex) / 2));
+
+    await page.getByRole("button", { name: "Reset turn" }).click();
+    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(`.rack-slot[data-rack-slot="${occupiedDestinationIndex}"] .tile[data-tile-id="${movedTileId}"]`))
       .toBeVisible();
 
     const manualLayout = await rackSlotSnapshot(page);
@@ -461,24 +514,58 @@ test("turns off autosorting, moves and swaps fixed rack slots, persists the layo
 
     await page.reload();
     await expect(page.getByText("Your turn", { exact: true })).toBeVisible();
-    await expect(offButton).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("grid", { name: "Your rack, manual arrangement" })).toBeVisible();
     expect(await rackSlotSnapshot(page)).toEqual(manualLayout);
 
-    const manualTileIds = manualLayout.filter((tileId): tileId is string => tileId !== null);
+    await colorButton.click();
+    await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
+    await expect(colorButton).toHaveAttribute("aria-pressed", "true");
+
+    await page.getByRole("button", { name: "Draw & end" }).click();
+    await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
+
+    const outOfTurnSource = page.locator(".rack-slot.is-occupied").first();
+    const outOfTurnSourceIndex = await outOfTurnSource.getAttribute("data-rack-slot");
+    const outOfTurnTile = outOfTurnSource.locator(".tile");
+    const outOfTurnTileId = await outOfTurnTile.getAttribute("data-tile-id");
+    const farRightTarget = rows.nth(0).locator(":scope > .rack-slot").last();
+    const farRightTargetIndex = await farRightTarget.getAttribute("data-rack-slot");
+    expect(outOfTurnSourceIndex).not.toBeNull();
+    expect(outOfTurnTileId).not.toBeNull();
+    expect(farRightTargetIndex).not.toBeNull();
+    await expect(outOfTurnTile).toBeEnabled();
+
+    await dragRackTileToSlot(page, outOfTurnTile, farRightTarget);
+    await expect(page.locator(`.rack-slot[data-rack-slot="${farRightTargetIndex}"] .tile[data-tile-id="${outOfTurnTileId}"]`))
+      .toBeVisible();
+    await expect(page.locator(`.rack-slot[data-rack-slot="${outOfTurnSourceIndex}"] .tile[data-tile-id="${outOfTurnTileId}"]`))
+      .toHaveCount(0);
+    await expect(page.getByRole("grid", { name: "Your rack, manual arrangement" })).toBeVisible();
+    await expect(colorButton).toHaveAttribute("aria-pressed", "false");
+    await expect(numberButton).toHaveAttribute("aria-pressed", "false");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("guppycube:rack-autosort")))
+      .toBe("false");
+
+    const outOfTurnLayout = await rackSlotSnapshot(page);
+    await expect.poll(async () => {
+      const stored = await page.evaluate((key) => localStorage.getItem(key), rackLayoutKey);
+      return stored ? (JSON.parse(stored) as { slots: Array<string | null> }).slots : null;
+    }).toEqual(outOfTurnLayout);
+
+    await page.reload();
+    await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
+    expect(await rackSlotSnapshot(page)).toEqual(outOfTurnLayout);
+
+    const manualTileIds = outOfTurnLayout.filter((tileId): tileId is string => tileId !== null);
     await colorButton.click();
     await expect(colorButton).toHaveAttribute("aria-pressed", "true");
-    await expect(offButton).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
     expect(await page.locator(".rack .tile").evaluateAll((tiles) =>
       tiles.map((tile) => (tile as HTMLElement).dataset.tileId),
     )).toEqual(sortRack(manualTileIds, rackGame.state.tiles, "color-first"));
 
-    await offButton.click();
-    await expect(offButton).toHaveAttribute("aria-pressed", "true");
     await numberButton.click();
     await expect(numberButton).toHaveAttribute("aria-pressed", "true");
-    await expect(offButton).toHaveAttribute("aria-pressed", "false");
     expect(await page.locator(".rack .tile").evaluateAll((tiles) =>
       tiles.map((tile) => (tile as HTMLElement).dataset.tileId),
     )).toEqual(sortRack(manualTileIds, rackGame.state.tiles, "number-first"));
@@ -543,20 +630,18 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     const sortButtonName = rackGame.linked.sortMode === "color-first" ? "Color → 123" : "123 → Color";
     await page.getByRole("button", { name: sortButtonName }).click();
 
-    const focusTilesButton = page.getByRole("button", { name: "Focus tiles", exact: true });
-    await expect(focusTilesButton).toBeVisible();
+    await expect(page.getByRole("button", { name: "Focus tiles", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Your rack", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Start here, then arrows move · Space selects", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: sortButtonName }).focus();
     await page.keyboard.press("ArrowRight");
     const firstDisplayedTile = page.locator(".rack .tile").first();
     await expect(firstDisplayedTile).toBeFocused();
     await expect(page.locator(".game-shell")).toHaveClass(/is-keyboard-navigating/);
-    await expect(page.locator(".rack-hold-hint")).toContainText("focused in blue");
     await page.keyboard.press("Space");
     await expect(firstDisplayedTile).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".rack-hold-hint")).toContainText("1 selected in yellow");
     await page.keyboard.press("Escape");
-    await focusTilesButton.click();
-    await expect(firstDisplayedTile).toBeFocused();
+    await expect(page.getByText("Space selects in yellow", { exact: true })).toHaveCount(0);
 
     const heldTile = page.locator(`.rack .tile[data-tile-id="${rackGame.linked.heldId}"]`);
     await heldTile.focus();
@@ -616,7 +701,7 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Control+Enter");
     await expect(page.getByText(/Turn not ready\./)).toBeAttached();
 
-    await page.keyboard.press("Control+Shift+Enter");
+    await page.keyboard.press("Meta+Shift+Enter");
     await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
   } finally {
     await context?.close();

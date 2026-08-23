@@ -66,13 +66,42 @@ function normalizeEnabledAssists(value: unknown, policy: AssistPolicyMap): Assis
   );
 }
 
+function upgradeWildcardId(value: unknown): unknown {
+  return typeof value === "string" ? value.replace(/^joker-/, "wildcard-") : value;
+}
+
+function upgradeTileIds(value: unknown): unknown {
+  return Array.isArray(value) ? value.map(upgradeWildcardId) : value;
+}
+
+function upgradeBoard(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((meld) => isRecord(meld) ? { ...meld, tileIds: upgradeTileIds(meld.tileIds) } : meld);
+}
+
+function upgradeTiles(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([id, tile]) => {
+    if (!isRecord(tile)) return [id, tile];
+    const wildcard = tile.wildcard === true || tile.joker === true;
+    const upgradedId = upgradeWildcardId(id);
+    const { joker: _legacyWildcard, ...rest } = tile;
+    return [upgradedId, { ...rest, id: upgradedId, wildcard }];
+  }));
+}
+
 function upgradeStoredGame(value: unknown): unknown {
   if (!isRecord(value) || !Array.isArray(value.players)) return value;
   const assistPolicy = normalizeAssistPolicy(value.assistPolicy);
   return {
     ...value,
     assistPolicy,
-    turnDraft: value.turnDraft ?? null,
+    pool: upgradeTileIds(value.pool),
+    board: upgradeBoard(value.board),
+    tiles: upgradeTiles(value.tiles),
+    turnDraft: isRecord(value.turnDraft)
+      ? { ...value.turnDraft, board: upgradeBoard(value.turnDraft.board) }
+      : value.turnDraft ?? null,
     players: value.players.map((player) => {
       if (!isRecord(player)) return player;
       const isComputer = player.isComputer === true;
@@ -83,6 +112,7 @@ function upgradeStoredGame(value: unknown): unknown {
         : null;
       return {
         ...player,
+        rack: upgradeTileIds(player.rack),
         isComputer,
         computerStrategy,
         enabledAssists: normalizeEnabledAssists(player.enabledAssists, assistPolicy),
@@ -220,10 +250,10 @@ export class GameRoom extends DurableObject<Env> {
   private view(state: StoredGame, playerId: string): PublicGameState {
     const me = this.playerFor(state, playerId);
     const currentPlayer = state.status === "playing" ? state.players[state.turnIndex] : null;
-    const myTurnDraft = state.turnDraft?.playerId === playerId
-      && state.turnDraft.turnStartedAt === state.turnStartedAt
+    const turnDraft = state.turnDraft?.turnStartedAt === state.turnStartedAt
       ? state.turnDraft.board
       : null;
+    const myTurnDraft = state.turnDraft?.playerId === playerId ? turnDraft : null;
     const players: PublicPlayer[] = state.players.map((player) => ({
       id: player.id,
       name: player.name,
@@ -253,6 +283,7 @@ export class GameRoom extends DurableObject<Env> {
       players,
       myPlayerId: me.id,
       myRack: me.rack,
+      turnDraft,
       myTurnDraft,
       tiles: state.tiles,
       history: state.history.slice(-12),
@@ -301,7 +332,7 @@ export class GameRoom extends DurableObject<Env> {
     state.turnDraft = null;
     state.turnIndex = (state.turnIndex + 1) % state.players.length;
     state.turnStartedAt = Date.now();
-    state.turnDeadline = state.turnStartedAt + turnDuration(state.mode);
+    state.turnDeadline = state.turnStartedAt + turnDuration(state.mode, state.turnDurationMs);
   }
 
   private calculateScores(state: StoredGame, winnerId: string): Record<string, number> {
@@ -398,10 +429,16 @@ export class GameRoom extends DurableObject<Env> {
     input: CreateGameInput,
     playerId: string,
     tokenHash: string,
+    turnDurationMs?: number,
   ): Promise<RoomResult> {
     if (this.load()) return { ok: false, error: "That room code is already in use." };
     const now = Date.now();
     const assistPolicy = normalizeAssistPolicy(input.assistPolicy);
+    const validTurnDurationMs = turnDurationMs !== undefined
+      && Number.isSafeInteger(turnDurationMs)
+      && turnDurationMs > 0
+      ? turnDurationMs
+      : undefined;
     const state: StoredGame = {
       id: roomCode,
       version: 1,
@@ -413,6 +450,7 @@ export class GameRoom extends DurableObject<Env> {
       updatedAt: now,
       turnStartedAt: null,
       turnDeadline: null,
+      ...(validTurnDurationMs === undefined ? {} : { turnDurationMs: validTurnDurationMs }),
       turnIndex: 0,
       winnerId: null,
       players: [{
@@ -575,7 +613,7 @@ export class GameRoom extends DurableObject<Env> {
     state.status = "playing";
     state.turnIndex = 0;
     state.turnStartedAt = Date.now();
-    state.turnDeadline = state.turnStartedAt + turnDuration(state.mode);
+    state.turnDeadline = state.turnStartedAt + turnDuration(state.mode, state.turnDurationMs);
     state.version += 1;
     state.updatedAt = Date.now();
     this.addHistory(state, event("started", `${state.players[0]?.name ?? "The first player"} goes first.`));
@@ -728,6 +766,7 @@ export class GameRoom extends DurableObject<Env> {
       board: input.board.map((meld) => ({ ...meld, tileIds: [...meld.tileIds] })),
     };
     this.persist(state);
+    this.broadcast(state);
     return { ok: true };
   }
 

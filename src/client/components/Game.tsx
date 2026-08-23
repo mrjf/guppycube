@@ -10,10 +10,10 @@ import {
   GripVertical,
   HelpCircle,
   History,
-  Keyboard,
   Layers3,
   Lightbulb,
   LogOut,
+  Palette,
   Plus,
   Redo2,
   RotateCcw,
@@ -24,7 +24,7 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   DragEvent,
@@ -32,7 +32,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { resolveJokerAssignments, validateMeld, validateTurn } from "../../shared/rules";
+import { resolveWildcardAssignments, validateMeld, validateTurn } from "../../shared/rules";
 import { findLinkedRackTileIds, groupSortedRackTileIds, normalizeMeldTileIds, sortTileIds } from "../../shared/sorting";
 import type { TileSortMode } from "../../shared/sorting";
 import { ASSIST_DEFINITIONS } from "../../shared/types";
@@ -40,9 +40,12 @@ import type { AssistId, ComputerStrategyId, GameEvent, GameSession, Meld, Public
 import { validators } from "../../validation";
 import { addComputer, ApiRequestError, getGame, saveTurnDraft, setAssist, socketUrl, startGame, takeAction } from "../api";
 import { appPath } from "../base-path";
+import { createFeltLayout } from "../felt-layout";
+import type { FeltLayout } from "../felt-layout";
 import { mergeGameState } from "../game-state";
 import {
   createRackLayout,
+  MANUAL_RACK_SLOTS_PER_ROW,
   parseRackLayout,
   placeRackTilesAtSlot,
   rackSlotIndex,
@@ -51,8 +54,14 @@ import {
   reconcileRackLayout,
   removeRackTiles,
 } from "../rack-layout";
-import type { RackLayout } from "../rack-layout";
-import { themeById, TILE_THEMES } from "../themes";
+import type { RackDropSide, RackLayout } from "../rack-layout";
+import {
+  COLOR_THEMES,
+  colorThemeById,
+  TILE_THEMES,
+  tileThemeById,
+  tileThemeIdFromLegacyTheme,
+} from "../themes";
 import { CatFaceIcon } from "./CatFaceIcon";
 import { TileView } from "./TileView";
 
@@ -64,7 +73,7 @@ interface GameProps {
 }
 
 type MoveTarget =
-  | { type: "rack"; slotIndex?: number }
+  | { type: "rack"; slotIndex?: number; side?: RackDropSide }
   | { type: "new"; meldId?: string }
   | { type: "meld"; meldId: string };
 
@@ -79,10 +88,28 @@ interface TurnDraft {
 
 const DRAG_ITEM_TYPE = "application/x-guppycube-item";
 const RACK_HOLD_MS = 500;
+const RACK_HOLD_REPEAT_MS = 350;
 const ENABLED_TILE_SELECTOR = ".tile[data-tile-id]:not(:disabled)";
 const COMPUTER_RACK_PREFERENCE_KEY = "guppycube:show-computer-racks";
 const RACK_AUTOSORT_PREFERENCE_KEY = "guppycube:rack-autosort";
+const COLOR_THEME_PREFERENCE_KEY = "guppycube:color-theme";
+const TILE_THEME_PREFERENCE_KEY = "guppycube:tile-theme";
 const ALL_COMPUTER_RACKS = "*";
+
+function legacyThemePreference(): string | null {
+  return localStorage.getItem("guppycube:theme") ?? localStorage.getItem("rack-and-run:theme");
+}
+
+function storedColorThemeId(): string {
+  return colorThemeById(localStorage.getItem(COLOR_THEME_PREFERENCE_KEY) ?? legacyThemePreference() ?? "").id;
+}
+
+function storedTileThemeId(): string {
+  const stored = localStorage.getItem(TILE_THEME_PREFERENCE_KEY);
+  return stored
+    ? tileThemeById(stored).id
+    : tileThemeIdFromLegacyTheme(legacyThemePreference());
+}
 
 function rackLayoutPreferenceKey(gameId: string, playerId: string): string {
   return `guppycube:rack-layout:${gameId}:${playerId}`;
@@ -107,6 +134,16 @@ function isApplePlatform(): boolean {
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+function isShortcutTypingTarget(
+  target: EventTarget | null,
+  event: { key: string; metaKey: boolean; ctrlKey: boolean },
+): boolean {
+  if (target instanceof HTMLSelectElement && (event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    return false;
+  }
+  return isTypingTarget(target);
 }
 
 function tileButtons(root: ParentNode): HTMLButtonElement[] {
@@ -138,7 +175,8 @@ function directionalTile(
     .filter(({ primary }) => primary > 2)
     .sort((left, right) => left.score - right.score)[0]?.candidate ?? null;
 }
-const ACTION_FLASH_MS = 3_200;
+const ACTION_FLASH_MS = 4_200;
+const NEW_ACTIVITY_MS = 3_600;
 const TURN_EVENT_KINDS = new Set<GameEvent["kind"]>(["played", "drew", "timeout"]);
 
 function timeLabel(deadline: number | null, now: number): string {
@@ -171,12 +209,13 @@ function draftKey(draft: TurnDraft): string {
 
 function authoritativePositionKey(game: PublicGameState | null): string {
   if (!game) return "";
+  const visibleOpponentDraft = game.currentPlayerId === game.myPlayerId ? null : game.turnDraft;
   return JSON.stringify({
     status: game.status,
     currentPlayerId: game.currentPlayerId,
     board: game.board.map((meld) => meld.tileIds),
     rack: [...game.myRack].sort(),
-    turnDraft: game.myTurnDraft?.map((meld) => meld.tileIds) ?? null,
+    turnDraft: visibleOpponentDraft?.map((meld) => meld.tileIds) ?? null,
     opened: game.players.find((player) => player.id === game.myPlayerId)?.opened ?? false,
   });
 }
@@ -241,6 +280,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [turnHistoryIndex, setTurnHistoryIndex] = useState(0);
   const [selectedTileIds, setSelectedTileIds] = useState<string[]>([]);
   const [draggedItem, setDraggedItem] = useState<DragItem | null>(null);
+  const [rackDropTarget, setRackDropTarget] = useState<{ slotIndex: number; side: RackDropSide } | null>(null);
   const [dropTargetMeldId, setDropTargetMeldId] = useState<string | null>(null);
   const [connection, setConnection] = useState<"connecting" | "online" | "offline">("connecting");
   const [busy, setBusy] = useState(false);
@@ -251,27 +291,49 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [copied, setCopied] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const [showAssists, setShowAssists] = useState(false);
+  const [showAppearance, setShowAppearance] = useState(false);
   const [flashedAction, setFlashedAction] = useState<GameEvent | null>(null);
-  const [recentlyPlayedTileIds, setRecentlyPlayedTileIds] = useState<string[]>([]);
+  const [newActivityTileIds, setNewActivityTileIds] = useState<string[]>([]);
   const [openComputerRackIds, setOpenComputerRackIds] = useState(storedOpenComputerRackIds);
   const [computerStrategy, setComputerStrategy] = useState<ComputerStrategyId>("basic");
-  const [themeId, setThemeId] = useState(() => localStorage.getItem("guppycube:theme") ?? localStorage.getItem("rack-and-run:theme") ?? "clubhouse");
+  const [colorThemeId, setColorThemeId] = useState(storedColorThemeId);
+  const [tileThemeId, setTileThemeId] = useState(storedTileThemeId);
   const [rackSortMode, setRackSortMode] = useState<TileSortMode>(() =>
     localStorage.getItem("guppycube:rack-sort") === "number-first" ? "number-first" : "color-first",
   );
   const [rackAutoSort, setRackAutoSort] = useState(() =>
     localStorage.getItem(RACK_AUTOSORT_PREFERENCE_KEY) !== "false",
   );
+  const [feltBounds, setFeltBounds] = useState({
+    width: 0,
+    height: 0,
+    obstacleWidth: 0,
+    obstacleHeight: 0,
+  });
   const [now, setNow] = useState(Date.now());
+  const feltRef = useRef<HTMLDivElement>(null);
+  const poolRef = useRef<HTMLButtonElement>(null);
   const rackHoldTimer = useRef<number | null>(null);
+  const rackHoldRun = useRef(0);
+  const rackHoldPointerId = useRef<number | null>(null);
   const suppressTileClick = useRef<string | null>(null);
   const doubleClickMeldId = useRef<string | null>(null);
   const selectionAnchorId = useRef<string | null>(null);
   const actionRoomId = useRef<string | null>(null);
-  const seenOpponentActionIds = useRef<Set<string>>(new Set());
+  const seenTurnActionIds = useRef<Set<string>>(new Set());
   const observedBoardTileIds = useRef<Set<string>>(new Set());
+  const observedRackTileIds = useRef<Set<string>>(new Set());
   const actionFlashTimer = useRef<number | null>(null);
+  const newActivityTimer = useRef<number | null>(null);
   const draftSequence = useRef(0);
+  const gameShortcutRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  const feltLayoutMemory = useRef<{
+    width: number;
+    height: number;
+    obstacleWidth: number;
+    obstacleHeight: number;
+    layout: FeltLayout;
+  } | null>(null);
   const positionKey = authoritativePositionKey(game);
 
   const refresh = useCallback(async () => {
@@ -342,41 +404,59 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   useEffect(() => () => {
     if (actionFlashTimer.current !== null) window.clearTimeout(actionFlashTimer.current);
+    if (newActivityTimer.current !== null) window.clearTimeout(newActivityTimer.current);
   }, []);
 
   useEffect(() => {
     if (!game) return;
     const boardTileIds = new Set(game.board.flatMap((meld) => meld.tileIds));
-    const opponentActions = game.history.filter((item) =>
+    const rackTileIds = new Set(game.myRack);
+    const turnActions = game.history.filter((item) =>
       item.playerId !== null
-      && item.playerId !== game.myPlayerId
       && TURN_EVENT_KINDS.has(item.kind),
     );
 
     if (actionRoomId.current !== game.id) {
       actionRoomId.current = game.id;
-      seenOpponentActionIds.current = new Set(opponentActions.map((item) => item.id));
+      seenTurnActionIds.current = new Set(turnActions.map((item) => item.id));
       observedBoardTileIds.current = boardTileIds;
+      observedRackTileIds.current = rackTileIds;
       setFlashedAction(null);
-      setRecentlyPlayedTileIds([]);
+      setNewActivityTileIds([]);
       return;
     }
 
-    const unseenActions = opponentActions.filter((item) => !seenOpponentActionIds.current.has(item.id));
-    for (const item of opponentActions) seenOpponentActionIds.current.add(item.id);
+    const unseenActions = turnActions.filter((item) => !seenTurnActionIds.current.has(item.id));
+    for (const item of turnActions) seenTurnActionIds.current.add(item.id);
     const latestAction = unseenActions.at(-1);
     const previousBoardTileIds = observedBoardTileIds.current;
+    const previousRackTileIds = observedRackTileIds.current;
     observedBoardTileIds.current = boardTileIds;
+    observedRackTileIds.current = rackTileIds;
+
+    const newBoardTileIds = latestAction?.kind === "played" && latestAction.playerId !== game.myPlayerId
+      ? [...boardTileIds].filter((tileId) => !previousBoardTileIds.has(tileId))
+      : [];
+    const newRackTileIds = latestAction?.kind === "drew" && latestAction.playerId === game.myPlayerId
+      ? [...rackTileIds].filter((tileId) => !previousRackTileIds.has(tileId))
+      : [];
+    const activityTileIds = [...new Set([...newBoardTileIds, ...newRackTileIds])];
+
+    if (activityTileIds.length > 0) {
+      setNewActivityTileIds(activityTileIds);
+      if (newActivityTimer.current !== null) window.clearTimeout(newActivityTimer.current);
+      newActivityTimer.current = window.setTimeout(() => {
+        setNewActivityTileIds([]);
+        newActivityTimer.current = null;
+      }, NEW_ACTIVITY_MS);
+    }
+
     if (!latestAction) return;
 
     setFlashedAction(latestAction);
-    setRecentlyPlayedTileIds(latestAction.kind === "played"
-      ? [...boardTileIds].filter((tileId) => !previousBoardTileIds.has(tileId))
-      : []);
     if (actionFlashTimer.current !== null) window.clearTimeout(actionFlashTimer.current);
     actionFlashTimer.current = window.setTimeout(() => {
       setFlashedAction(null);
-      setRecentlyPlayedTileIds([]);
       actionFlashTimer.current = null;
     }, ACTION_FLASH_MS);
   }, [game]);
@@ -388,11 +468,59 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     );
   }, [openComputerRackIds]);
 
-  useEffect(() => () => cancelRackHold(), []);
+  useEffect(() => {
+    const cancelRackHoldOnPointerEnd = (event: PointerEvent) => {
+      if (rackHoldPointerId.current === event.pointerId) cancelRackHold();
+    };
+
+    window.addEventListener("pointerup", cancelRackHoldOnPointerEnd, true);
+    window.addEventListener("pointercancel", cancelRackHoldOnPointerEnd, true);
+    return () => {
+      window.removeEventListener("pointerup", cancelRackHoldOnPointerEnd, true);
+      window.removeEventListener("pointercancel", cancelRackHoldOnPointerEnd, true);
+      cancelRackHold();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const felt = feltRef.current;
+    const pool = poolRef.current;
+    if (!felt || !pool) return;
+
+    const measure = () => {
+      const feltRect = felt.getBoundingClientRect();
+      const poolRect = pool.getBoundingClientRect();
+      const overlapLeft = Math.max(feltRect.left, poolRect.left);
+      const overlapRight = Math.min(feltRect.right, poolRect.right);
+      const overlapBottom = Math.min(feltRect.bottom, poolRect.bottom);
+      const drawPileOverlapsFelt = overlapLeft < overlapRight && feltRect.top < overlapBottom;
+      const next = {
+        width: felt.clientWidth,
+        height: felt.clientHeight,
+        obstacleWidth: drawPileOverlapsFelt
+          ? Math.max(0, Math.min(felt.clientWidth, feltRect.right - overlapLeft + 4))
+          : 0,
+        obstacleHeight: drawPileOverlapsFelt
+          ? Math.max(0, Math.min(felt.clientHeight, overlapBottom - feltRect.top + 4))
+          : 0,
+      };
+      setFeltBounds((current) => Object.keys(next).every((key) =>
+        current[key as keyof typeof current] === next[key as keyof typeof next]
+      ) ? current : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(felt);
+    observer.observe(pool);
+    return () => observer.disconnect();
+  }, [game?.status]);
 
   useEffect(() => {
     if (!game) return;
-    const board = (game.myTurnDraft ?? game.board).map((meld) => ({
+    const visibleBoard = game.currentPlayerId === game.myPlayerId
+      ? game.myTurnDraft
+      : game.turnDraft;
+    const board = (visibleBoard ?? game.board).map((meld) => ({
       ...meld,
       tileIds: normalizeMeldTileIds(meld.tileIds, game.tiles),
     }));
@@ -401,11 +529,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     const layoutKey = rackLayoutPreferenceKey(game.id, game.myPlayerId);
     const storedLayout = parseRackLayout(localStorage.getItem(layoutKey));
     const rackLayout = rackAutoSort
-      ? createRackLayout(
-          sortTileIds(rackTileIds, game.tiles, rackSortMode),
-          storedLayout?.slotsPerRow,
-        )
-      : reconcileRackLayout(storedLayout ?? createRackLayout(rackTileIds), rackTileIds);
+      ? createRackLayout(sortTileIds(rackTileIds, game.tiles, rackSortMode), MANUAL_RACK_SLOTS_PER_ROW)
+      : reconcileRackLayout(
+          storedLayout ?? createRackLayout(rackTileIds),
+          rackTileIds,
+          MANUAL_RACK_SLOTS_PER_ROW,
+        );
     setDraftBoard(board);
     setDraftRackLayout(rackLayout);
     setRackLayoutOwnerKey(layoutKey);
@@ -413,6 +542,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setTurnHistoryIndex(0);
     setSelectedTileIds([]);
     setDraggedItem(null);
+    setRackDropTarget(null);
     setDropTargetMeldId(null);
     doubleClickMeldId.current = null;
     selectionAnchorId.current = null;
@@ -442,12 +572,13 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const selectionCanReturnToRack = selectedTileIds.length > 0
     && selectedTileIds.every((tileId) => originalRackTiles.has(tileId))
     && selectedTileIds.some((tileId) => !draftRack.includes(tileId));
-  const activeTheme = themeById(themeId);
+  const activeColorTheme = colorThemeById(colorThemeId);
+  const activeTileTheme = tileThemeById(tileThemeId);
   const shortcutModifier = useMemo(() => isApplePlatform() ? "⌘" : "Ctrl", []);
   const optionModifier = useMemo(() => isApplePlatform() ? "⌥" : "Alt", []);
   const rackRows = useMemo(() => rackSlotRows(draftRackLayout), [draftRackLayout]);
   const autosortedMeldTileIds = useMemo(() => new Set(
-    rackAutoSort && game
+    rackAutoSort && game?.enabledAssists.includes("rack-meld-highlights")
       ? groupSortedRackTileIds(draftRack, game.tiles)
           .filter((group) => group.isMeld)
           .flatMap((group) => group.tileIds)
@@ -465,6 +596,26 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     });
   }, [draftBoard, game, isMyTurn, me]);
   const canCommit = turnValidation?.valid === true;
+  const hasLiveOpponentDraft = !isMyTurn
+    && game?.turnDraft !== null
+    && boardKey(draftBoard) !== boardKey(game?.board ?? []);
+  const opponentTurnValidation = useMemo(() => {
+    if (!game || !currentPlayer || !hasLiveOpponentDraft) return null;
+    const tableTileIds = new Set(game.board.flatMap((meld) => meld.tileIds));
+    const attemptedTileIds = draftBoard
+      .flatMap((meld) => meld.tileIds)
+      .filter((tileId) => !tableTileIds.has(tileId));
+    return validateTurn({
+      previousBoard: game.board,
+      proposedBoard: draftBoard,
+      rack: attemptedTileIds,
+      opened: currentPlayer.opened,
+      tiles: game.tiles,
+    });
+  }, [currentPlayer, draftBoard, game, hasLiveOpponentDraft]);
+  const visibleTurnValidation = isMyTurn ? turnValidation : opponentTurnValidation;
+  const hasBoardDefect = (isMyTurn ? dirty : hasLiveOpponentDraft)
+    && visibleTurnValidation?.valid === false;
 
   const openingPoints = useMemo(() => {
     if (!game || me?.opened) return 0;
@@ -476,10 +627,57 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     }, 0);
   }, [draftBoard, game, me?.opened, originalRackTiles]);
 
+  const feltLayout = useMemo(() => {
+    const previous = feltLayoutMemory.current;
+    const sameBounds = previous
+      && previous.width === feltBounds.width
+      && previous.height === feltBounds.height
+      && previous.obstacleWidth === feltBounds.obstacleWidth
+      && previous.obstacleHeight === feltBounds.obstacleHeight;
+    const next = createFeltLayout(
+      draftBoard.map((meld, placementOrder) => ({
+        id: meld.id,
+        tileCount: meld.tileIds.length,
+        placementOrder,
+        orderKey: meld.tileIds.map((tileId) => {
+          const tile = game?.tiles[tileId];
+          if (!tile) return `missing:${tileId}`;
+          return tile.wildcard
+            ? "wildcard"
+            : `${tile.color ?? ""}:${String(tile.value ?? 0).padStart(2, "0")}`;
+        }).join("|"),
+      })),
+      feltBounds.width,
+      feltBounds.height,
+      { width: feltBounds.obstacleWidth, height: feltBounds.obstacleHeight },
+      sameBounds ? previous.layout : undefined,
+    );
+    feltLayoutMemory.current = {
+      width: feltBounds.width,
+      height: feltBounds.height,
+      obstacleWidth: feltBounds.obstacleWidth,
+      obstacleHeight: feltBounds.obstacleHeight,
+      layout: next,
+    };
+    return next;
+  }, [
+    draftBoard,
+    feltBounds.height,
+    feltBounds.obstacleHeight,
+    feltBounds.obstacleWidth,
+    feltBounds.width,
+    game?.tiles,
+  ]);
+
   function tileName(tileId: string): string {
     const tile = game?.tiles[tileId];
     if (!tile) return "Tile";
-    return tile.joker ? "Joker" : `${tile.color} ${tile.value}`;
+    return tile.wildcard ? "Wildcard" : `${tile.color} ${tile.value}`;
+  }
+
+  function feltMeldNumber(meldId: string): number {
+    const canonicalIndex = feltLayout.placements.findIndex((placement) => placement.id === meldId);
+    return canonicalIndex >= 0 ? canonicalIndex + 1 : draftBoard.findIndex((meld) => meld.id === meldId) + 1;
   }
 
   function focusTileNavigation(
@@ -562,6 +760,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   function clearTurnInteraction() {
     setSelectedTileIds([]);
     setDraggedItem(null);
+    setRackDropTarget(null);
     setDropTargetMeldId(null);
     selectionAnchorId.current = null;
     setError("");
@@ -605,7 +804,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setDraftRackLayout(rackAutoSort
       ? createRackLayout(
           sortTileIds(rackTileIds(draft.rackLayout), game.tiles, rackSortMode),
-          draft.rackLayout.slotsPerRow,
+          MANUAL_RACK_SLOTS_PER_ROW,
         )
       : draft.rackLayout);
     if (boardKey(draft.board) !== boardKey(draftBoard)) syncTurnDraft(draft.board);
@@ -613,10 +812,56 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   }
 
   function moveTiles(tileIds: string[], target: MoveTarget) {
-    if (!isMyTurn || !game) return;
+    if (!game) return;
     const movingTileIds = [...new Set(tileIds)].filter((tileId) => game.tiles[tileId]);
     if (movingTileIds.length === 0) return;
     const movingTiles = new Set(movingTileIds);
+
+    const personalRackSlotIndex = target.type === "rack"
+      && target.slotIndex !== undefined
+      && movingTileIds.every((tileId) => draftRack.includes(tileId))
+      ? target.slotIndex
+      : null;
+    if (personalRackSlotIndex !== null) {
+      const manualRackLayout = rackAutoSort
+        ? reconcileRackLayout(draftRackLayout, draftRack, MANUAL_RACK_SLOTS_PER_ROW)
+        : draftRackLayout;
+      const nextRackLayout = placeRackTilesAtSlot(
+        manualRackLayout,
+        movingTileIds,
+        personalRackSlotIndex,
+        target.type === "rack" ? target.side : undefined,
+      );
+      setRackAutoSort(false);
+      localStorage.setItem(RACK_AUTOSORT_PREFERENCE_KEY, "false");
+      setDraftRackLayout(nextRackLayout);
+      setTurnHistory((history) => history.map((draft) => {
+        const tileIdsInDraftRack = new Set(rackTileIds(draft.rackLayout));
+        const manualDraftLayout = rackAutoSort
+          ? reconcileRackLayout(draft.rackLayout, rackTileIds(draft.rackLayout), MANUAL_RACK_SLOTS_PER_ROW)
+          : draft.rackLayout;
+        return movingTileIds.every((tileId) => tileIdsInDraftRack.has(tileId))
+          ? {
+              ...draft,
+              rackLayout: placeRackTilesAtSlot(
+                manualDraftLayout,
+                movingTileIds,
+                personalRackSlotIndex,
+                target.type === "rack" ? target.side : undefined,
+              ),
+            }
+          : draft;
+      }));
+      localStorage.setItem(
+        rackLayoutPreferenceKey(game.id, game.myPlayerId),
+        JSON.stringify(nextRackLayout),
+      );
+      clearTurnInteraction();
+      setInteractionAnnouncement(`Moved ${movingTileIds.length} ${movingTileIds.length === 1 ? "tile" : "tiles"} on your rack.`);
+      return;
+    }
+
+    if (!isMyTurn) return;
 
     if (target.type === "rack" && movingTileIds.some((tileId) => originalBoardTiles.has(tileId))) {
       setError("A table tile cannot return to your rack. Move it into another meld.");
@@ -651,10 +896,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         if (rackAutoSort) {
           nextRackLayout = createRackLayout(
             sortTileIds([...rackTileIds(nextRackLayout), ...movingTileIds], game.tiles, rackSortMode),
-            draftRackLayout.slotsPerRow,
+            MANUAL_RACK_SLOTS_PER_ROW,
           );
         } else if (target.slotIndex !== undefined) {
-          nextRackLayout = placeRackTilesAtSlot(draftRackLayout, movingTileIds, target.slotIndex);
+          nextRackLayout = placeRackTilesAtSlot(draftRackLayout, movingTileIds, target.slotIndex, target.side);
         } else {
           nextRackLayout = reconcileRackLayout(
             nextRackLayout,
@@ -681,7 +926,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       ? "your rack"
       : target.type === "new"
         ? "a new meld"
-        : `meld ${nextBoard.findIndex((meld) => meld.id === target.meldId) + 1}`;
+        : `meld ${feltMeldNumber(target.meldId)}`;
     setInteractionAnnouncement(`Moved ${movingTileIds.length} ${movingTileIds.length === 1 ? "tile" : "tiles"} to ${destination}.`);
     recordDraft(nextBoard, nextRackLayout);
   }
@@ -704,8 +949,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
             tileIds: normalizeMeldTileIds([...meld.tileIds, ...source.tileIds], game.tiles),
           }
         : meld);
-    const targetNumber = nextBoard.findIndex((meld) => meld.id === targetMeldId) + 1;
-    setInteractionAnnouncement(`Combined the melds into meld ${targetNumber}.`);
+    setInteractionAnnouncement("Combined the two melds.");
     recordDraft(nextBoard, draftRackLayout);
   }
 
@@ -811,7 +1055,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setSelectedTileIds([]);
     selectionAnchorId.current = null;
     setDraggedItem({ type: "meld", meldId });
-    const meldNumber = draftBoard.findIndex((meld) => meld.id === meldId) + 1;
+    const meldNumber = feltMeldNumber(meldId);
     setInteractionAnnouncement(`Picked up meld ${meldNumber}. Choose another meld's move button to combine them, or press Escape to cancel.`);
   }
 
@@ -848,17 +1092,43 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   function beginRackHold(event: ReactPointerEvent<HTMLButtonElement>, tileId: string) {
     if (!game || !isMyTurn || !event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
     cancelRackHold();
-    rackHoldTimer.current = window.setTimeout(() => {
-      const linkedTileIds = rackAutoSort
-        ? findLinkedRackTileIds(draftRack, tileId, game.tiles)
-        : [tileId];
-      setSelectedTileIds(linkedTileIds);
-      suppressTileClick.current = tileId;
-      rackHoldTimer.current = null;
-    }, RACK_HOLD_MS);
+    const heldIndex = draftRack.indexOf(tileId);
+    if (heldIndex < 0) return;
+
+    const holdRun = rackHoldRun.current;
+    const tileIdsToPickUp = draftRack.slice(heldIndex);
+    const pointerTarget = event.currentTarget;
+    const pointerId = event.pointerId;
+    rackHoldPointerId.current = pointerId;
+    const pickUpNextTile = (index: number) => {
+      rackHoldTimer.current = window.setTimeout(() => {
+        if (holdRun !== rackHoldRun.current) return;
+        const pickedUpTileIds = tileIdsToPickUp.slice(0, index + 1);
+        if (index === 0) {
+          try {
+            pointerTarget.setPointerCapture(pointerId);
+          } catch {
+            // Synthetic pointer events do not have an active pointer to capture.
+          }
+          suppressTileClick.current = tileId;
+          selectionAnchorId.current = tileId;
+          setDraggedItem(null);
+        }
+        setSelectedTileIds(pickedUpTileIds);
+        announceSelection(pickedUpTileIds, tileIdsToPickUp[index]);
+
+        const nextIndex = index + 1;
+        if (nextIndex < tileIdsToPickUp.length) pickUpNextTile(nextIndex);
+        else rackHoldTimer.current = null;
+      }, index === 0 ? RACK_HOLD_MS : RACK_HOLD_REPEAT_MS);
+    };
+
+    pickUpNextTile(0);
   }
 
   function cancelRackHold() {
+    rackHoldRun.current += 1;
+    rackHoldPointerId.current = null;
     if (rackHoldTimer.current !== null) {
       window.clearTimeout(rackHoldTimer.current);
       rackHoldTimer.current = null;
@@ -902,17 +1172,60 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     return draggedItem ?? (selectedTileIds.length > 0 ? { type: "tiles", tileIds: selectedTileIds } : null);
   }
 
+  function rackDropSideForEvent(event: DragEvent<HTMLElement>): RackDropSide | undefined {
+    // Synthetic drag events used by keyboard/test tooling do not have a
+    // pointer position. Keep their legacy direct-slot behavior; real drops
+    // use the half of the tile the pointer is over.
+    if (!Number.isFinite(event.clientX) || event.clientX <= 0) return undefined;
+    return rackDropSideForElement(event.currentTarget, event.clientX);
+  }
+
+  function rackDropSideForElement(element: HTMLElement, clientX: number): RackDropSide {
+    const bounds = element.getBoundingClientRect();
+    return clientX < bounds.left + bounds.width / 2 ? "before" : "after";
+  }
+
+  function rackSlotAtPoint(rack: HTMLElement, clientX: number, clientY: number): HTMLElement | null {
+    const slots = [...rack.querySelectorAll<HTMLElement>(".rack-slot")];
+    const directHit = slots.find((slot) => {
+      const bounds = slot.getBoundingClientRect();
+      return clientX >= bounds.left && clientX <= bounds.right && clientY >= bounds.top && clientY <= bounds.bottom;
+    });
+    if (directHit) return directHit;
+
+    // The rack itself remains a drop surface in the gaps between slots. Map
+    // those pixels to the nearest fixed slot so a transparent slot can never
+    // become an accidental dead zone.
+    return slots
+      .map((slot) => {
+        const bounds = slot.getBoundingClientRect();
+        const dx = clientX < bounds.left ? bounds.left - clientX : clientX > bounds.right ? clientX - bounds.right : 0;
+        const dy = clientY < bounds.top ? bounds.top - clientY : clientY > bounds.bottom ? clientY - bounds.bottom : 0;
+        return { slot, distance: dx * dx + dy * dy };
+      })
+      .sort((left, right) => left.distance - right.distance)[0]?.slot ?? null;
+  }
+
   function drop(event: DragEvent<HTMLElement>, target: MoveTarget) {
     event.preventDefault();
     const item = readDragItem(event);
     if (!item) return;
     if (item.type === "tiles") {
-      moveTiles(item.tileIds, target);
+      const rackTarget = target.type === "rack" && target.slotIndex !== undefined
+        ? {
+            ...target,
+            side: target.side
+              ?? rackDropSideForEvent(event)
+              ?? (rackDropTarget?.slotIndex === target.slotIndex ? rackDropTarget.side : undefined),
+          }
+        : target;
+      moveTiles(item.tileIds, rackTarget);
     } else if (target.type === "meld") {
       mergeMelds(item.meldId, target.meldId);
     } else if (target.type === "rack") {
       setError("A whole meld cannot move to your rack. Drag an eligible rack tile instead.");
       setDraggedItem(null);
+      setRackDropTarget(null);
       setDropTargetMeldId(null);
     } else {
       setDraggedItem(null);
@@ -922,6 +1235,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function finishDrag() {
     setDraggedItem(null);
+    setRackDropTarget(null);
     setDropTargetMeldId(null);
   }
 
@@ -937,17 +1251,17 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (game) {
       setDraftRackLayout(createRackLayout(
         sortTileIds(draftRack, game.tiles, nextMode),
-        draftRackLayout.slotsPerRow,
+        MANUAL_RACK_SLOTS_PER_ROW,
       ));
+      setTurnHistory((history) => history.map((draft) => ({
+        ...draft,
+        rackLayout: createRackLayout(
+          sortTileIds(rackTileIds(draft.rackLayout), game.tiles, nextMode),
+          MANUAL_RACK_SLOTS_PER_ROW,
+        ),
+      })));
       clearTurnInteraction();
     }
-  }
-
-  function disableRackAutoSort() {
-    setRackAutoSort(false);
-    localStorage.setItem(RACK_AUTOSORT_PREFERENCE_KEY, "false");
-    clearTurnInteraction();
-    setInteractionAnnouncement("Autosorting off. Drag tiles to any rack slot.");
   }
 
   async function runAction(action: Parameters<typeof takeAction>[1]) {
@@ -1013,10 +1327,16 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     }
   }
 
-  function changeTheme(next: string) {
-    setThemeId(next);
-    localStorage.setItem("guppycube:theme", next);
-    localStorage.removeItem("rack-and-run:theme");
+  function changeColorTheme(next: string) {
+    const theme = colorThemeById(next);
+    setColorThemeId(theme.id);
+    localStorage.setItem(COLOR_THEME_PREFERENCE_KEY, theme.id);
+  }
+
+  function changeTileTheme(next: string) {
+    const theme = tileThemeById(next);
+    setTileThemeId(theme.id);
+    localStorage.setItem(TILE_THEME_PREFERENCE_KEY, theme.id);
   }
 
   function drawAndEnd() {
@@ -1036,59 +1356,75 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     void runAction({ type: "commit", board: draftBoard });
   }
 
-  useEffect(() => {
-    function handleGameShortcut(event: KeyboardEvent) {
-      if (event.defaultPrevented || event.repeat || isTypingTarget(event.target)) return;
+  function handleTurnShortcut(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.defaultPrevented || event.repeat || isShortcutTypingTarget(event.target, event)) return;
 
-      const navigationKeys = ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"] as const;
-      const isTileTarget = event.target instanceof HTMLElement && Boolean(event.target.closest(ENABLED_TILE_SELECTOR));
-      if (
-        isMyTurn
-        && !isTileTarget
-        && !event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-        && navigationKeys.includes(event.key as typeof navigationKeys[number])
-      ) {
-        event.preventDefault();
-        focusTileNavigation(event.key as typeof navigationKeys[number]);
-        return;
-      }
+    const primaryModifier = event.metaKey || event.ctrlKey;
+    if (!primaryModifier || event.altKey || !isMyTurn || busy) return;
 
-      if (event.key === "Escape" && (selectedTileIds.length > 0 || draggedItem)) {
-        event.preventDefault();
-        clearTurnInteraction();
-        setInteractionAnnouncement("Selection canceled.");
-        return;
-      }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.shiftKey) drawAndEnd();
+      else commitTurn();
+    }
+  }
 
-      const primaryModifier = event.metaKey || event.ctrlKey;
-      if (!primaryModifier || event.altKey || !isMyTurn || busy) return;
+  function handleGameShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.repeat || isShortcutTypingTarget(event.target, event)) return;
 
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (event.shiftKey) drawAndEnd();
-        else commitTurn();
-        return;
-      }
-
-      const key = event.key.toLocaleLowerCase();
-      const wantsUndo = key === "z" && !event.shiftKey;
-      const wantsRedo = key === "y" || (key === "z" && event.shiftKey);
-      if (wantsUndo && turnHistoryIndex > 0) {
-        event.preventDefault();
-        showTurnHistory(turnHistoryIndex - 1);
-        setInteractionAnnouncement("Undid the last table move.");
-      } else if (wantsRedo && turnHistoryIndex < turnHistory.length - 1) {
-        event.preventDefault();
-        showTurnHistory(turnHistoryIndex + 1);
-        setInteractionAnnouncement("Redid the next table move.");
-      }
+    const navigationKeys = ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"] as const;
+    const isTileTarget = event.target instanceof HTMLElement && Boolean(event.target.closest(ENABLED_TILE_SELECTOR));
+    if (
+      isMyTurn
+      && !isTileTarget
+      && !event.metaKey
+      && !event.ctrlKey
+      && !event.altKey
+      && navigationKeys.includes(event.key as typeof navigationKeys[number])
+    ) {
+      event.preventDefault();
+      focusTileNavigation(event.key as typeof navigationKeys[number]);
+      return;
     }
 
-    window.addEventListener("keydown", handleGameShortcut);
-    return () => window.removeEventListener("keydown", handleGameShortcut);
-  });
+    if (event.key === "Escape" && (selectedTileIds.length > 0 || draggedItem)) {
+      event.preventDefault();
+      clearTurnInteraction();
+      setInteractionAnnouncement("Selection canceled.");
+      return;
+    }
+
+    const primaryModifier = event.metaKey || event.ctrlKey;
+    if (!primaryModifier || event.altKey || !isMyTurn || busy) return;
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (event.shiftKey) drawAndEnd();
+      else commitTurn();
+      return;
+    }
+
+    const key = event.key.toLocaleLowerCase();
+    const wantsUndo = key === "z" && !event.shiftKey;
+    const wantsRedo = key === "y" || (key === "z" && event.shiftKey);
+    if (wantsUndo && turnHistoryIndex > 0) {
+      event.preventDefault();
+      showTurnHistory(turnHistoryIndex - 1);
+      setInteractionAnnouncement("Undid the last table move.");
+    } else if (wantsRedo && turnHistoryIndex < turnHistory.length - 1) {
+      event.preventDefault();
+      showTurnHistory(turnHistoryIndex + 1);
+      setInteractionAnnouncement("Redid the next table move.");
+    }
+  }
+
+  gameShortcutRef.current = handleGameShortcut;
+  useEffect(() => {
+    const handleWindowKeyDown = (event: KeyboardEvent) => gameShortcutRef.current(event);
+    window.addEventListener("keydown", handleWindowKeyDown);
+    return () => window.removeEventListener("keydown", handleWindowKeyDown);
+  }, []);
 
   if (!game) {
     return (
@@ -1103,7 +1439,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   if (game.status === "lobby") {
     const isHost = game.players.some((player) => player.id === game.myPlayerId && player.isHost);
     return (
-      <main className={`lobby-shell ${activeTheme.className}`}>
+      <main className={`lobby-shell ${activeColorTheme.className} ${activeTileTheme.className}`}>
         <nav className="game-nav">
           <button className="wordmark wordmark-button" type="button" onClick={onExit} aria-label="guppycube home"><span><CatFaceIcon className="wordmark-cat" /></span> guppycube</button>
           <button className="icon-button" type="button" onClick={onShowRules} aria-label="How to play"><HelpCircle /></button>
@@ -1168,26 +1504,28 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   for (const item of game.history) {
     if (item.playerId !== null && TURN_EVENT_KINDS.has(item.kind)) lastTurnByPlayer.set(item.playerId, item);
   }
-  const meldColumnCount = Math.max(1, Math.ceil(Math.sqrt(draftBoard.length)));
-  const recentlyPlayedTiles = new Set(recentlyPlayedTileIds);
-  const meldRows = Array.from(
-    { length: Math.ceil(draftBoard.length / meldColumnCount) },
-    (_, rowIndex) => draftBoard.slice(rowIndex * meldColumnCount, (rowIndex + 1) * meldColumnCount),
+  const newActivityTiles = new Set(newActivityTileIds);
+  const newActivityMelds = new Set(
+    draftBoard
+      .filter((meld) => meld.tileIds.some((tileId) => newActivityTiles.has(tileId)))
+      .map((meld) => meld.id),
   );
+  const meldsById = new Map(draftBoard.map((meld) => [meld.id, meld]));
 
   return (
-    <main className={`game-shell ${activeTheme.className} ${keyboardNavigationActive ? "is-keyboard-navigating" : ""}`}>
+    <main
+      className={`game-shell ${activeColorTheme.className} ${activeTileTheme.className} ${keyboardNavigationActive ? "is-keyboard-navigating" : ""}`}
+      onKeyDownCapture={handleTurnShortcut}
+    >
       <p className="sr-only" aria-live="polite" aria-atomic="true">{interactionAnnouncement}</p>
       <header className="game-header">
         <button className="wordmark wordmark-button compact-mark" type="button" onClick={onExit} aria-label="guppycube home"><span><CatFaceIcon className="wordmark-cat" /></span><b>guppycube</b></button>
         <div className="room-pill"><span>TABLE</span> {game.id}</div>
         <div className="header-actions">
           <span className={`connection-pill is-${connection}`}>{connection === "online" ? <Wifi /> : <WifiOff />} {connection}</span>
-          <select aria-label="Tile design" value={themeId} onChange={(event) => changeTheme(event.target.value)}>
-            {TILE_THEMES.map((theme) => <option value={theme.id} key={theme.id}>{theme.name}</option>)}
-          </select>
-          <button className="icon-button" type="button" aria-pressed={showAssists} onClick={() => { setShowAssists(!showAssists); setShowActivity(false); }} aria-label="Assists"><SlidersHorizontal /></button>
-          <button className="icon-button" type="button" aria-pressed={showActivity} onClick={() => { setShowActivity(!showActivity); setShowAssists(false); }} aria-label="Activity"><History /></button>
+          <button className="icon-button" type="button" aria-pressed={showAppearance} onClick={() => { setShowAppearance(!showAppearance); setShowAssists(false); setShowActivity(false); }} aria-label="Appearance"><Palette /></button>
+          <button className="icon-button" type="button" aria-pressed={showAssists} onClick={() => { setShowAssists(!showAssists); setShowAppearance(false); setShowActivity(false); }} aria-label="Assists"><SlidersHorizontal /></button>
+          <button className="icon-button" type="button" aria-pressed={showActivity} onClick={() => { setShowActivity(!showActivity); setShowAppearance(false); setShowAssists(false); }} aria-label="Activity"><History /></button>
           <button className="icon-button" type="button" onClick={onShowRules} aria-label="How to play and keyboard controls"><HelpCircle /></button>
           <button className="icon-button desktop-only" type="button" onClick={onExit} aria-label="Leave table"><LogOut /></button>
         </div>
@@ -1251,20 +1589,20 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
             </article>
           );
         })}
-        <div className={`turn-clock ${isMyTurn ? "is-mine" : ""}`}><Clock3 /><span><small>{isMyTurn ? "Your turn" : `${currentPlayer?.name ?? "—"}'s turn`}</small><strong>{timeLabel(game.turnDeadline, now)}</strong></span></div>
+        <div className="players-topline-actions">
+          <div className={`turn-clock ${isMyTurn ? "is-mine" : ""}`}><Clock3 /><span><small>{isMyTurn ? "Your turn" : `${currentPlayer?.name ?? "—"}'s turn`}</small><strong>{timeLabel(game.turnDeadline, now)}</strong></span></div>
+          <div
+            className={`top-turn-actions ${!isMyTurn || game.status !== "playing" ? "layout-placeholder" : ""}`}
+            aria-hidden={!isMyTurn || game.status !== "playing"}
+          >
+            <button className="secondary-button" type="button" disabled={!isMyTurn || busy} onClick={drawAndEnd} aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"><ArrowDownToLine /> <span>Draw & end</span><kbd aria-hidden="true">{shortcutModifier}⇧↵</kbd></button>
+            <button className="primary-button" type="button" disabled={!isMyTurn || !canCommit || busy} onClick={commitTurn} aria-keyshortcuts="Control+Enter Meta+Enter"><Check /> <span>Commit turn</span><kbd aria-hidden="true">{shortcutModifier}↵</kbd></button>
+          </div>
+        </div>
       </section>
 
-      <div className={`table-topline ${selectedTileIds.length > 0 || draggedItem ? "has-selected-tile" : ""}`}>
+      <div className="table-topline">
         <div className="table-summary"><span className="eyebrow">The table</span><b>{draftBoard.flatMap((meld) => meld.tileIds).length} tiles down</b></div>
-        <div className={`table-drop-instruction ${!isMyTurn ? "layout-placeholder" : ""}`} aria-hidden={!isMyTurn} aria-live="polite">
-          <Plus /> {draggedItem?.type === "meld"
-            ? "Choose another meld's move button to combine them, or press Escape to cancel"
-            : selectedTileIds.length > 1
-              ? `Move ${selectedTileIds.length} selected tiles to open table space or a meld`
-              : selectedTileIds.length === 1
-                ? "Tap open table space to start a new meld, or tap a meld to add it"
-                : "Drag a tile or a whole meld to reorganize the table"}
-        </div>
         <div
           className={`table-turn-tools ${!isMyTurn || game.status !== "playing" ? "layout-placeholder" : ""}`}
           aria-hidden={!isMyTurn || game.status !== "playing"}
@@ -1279,8 +1617,8 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
       <div className="table-layout">
         <section
-          className={`table-surface ${isMyTurn ? "is-open-drop-target" : ""} ${selectedTileIds.length > 0 || draggedItem ? "has-selected-tile" : ""}`}
-          aria-label="Game table"
+          className={`table-surface ${isMyTurn ? "is-open-drop-target" : ""} ${hasLiveOpponentDraft ? "is-watching-live" : ""} ${hasBoardDefect ? "has-board-defect" : ""} ${selectedTileIds.length > 0 || draggedItem ? "has-selected-tile" : ""}`}
+          aria-label={`Game table${hasLiveOpponentDraft ? `, live attempt by ${currentPlayer?.name ?? "the current player"}` : ""}${hasBoardDefect && visibleTurnValidation?.reason ? `. Needs attention: ${visibleTurnValidation.reason}` : ""}`}
           onClick={() => selectedTileIds.length > 0 && moveTiles(selectedTileIds, { type: "new" })}
           onDragOver={(event) => {
             if (!isMyTurn) return;
@@ -1291,6 +1629,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         >
           <button
             className="pool-count"
+            ref={poolRef}
             type="button"
             disabled={!isMyTurn || busy || game.poolCount === 0}
             aria-label={`Draw one tile and end turn. ${game.poolCount} tiles remain in the pool.`}
@@ -1301,19 +1640,30 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
             }}
           ><span className="tile-stack-icon" aria-hidden="true" /><span><small>Draw pile</small><strong>{game.poolCount}</strong></span></button>
 
-          <div className="melds">
-            {meldRows.length > 0 && (
-              <div className={`meld-grid ${meldRows.length > 3 ? "fills-width" : ""}`}>
-                {meldRows.map((meldRow, rowIndex) => (
-                  <div className="meld-row" key={meldRow[0]?.id ?? rowIndex}>
-                {meldRow.map((meld, columnIndex) => {
-                  const meldIndex = rowIndex * meldColumnCount + columnIndex;
+          <div className="melds" ref={feltRef}>
+            {feltLayout.placements.length > 0 && (
+              <div
+                className="meld-grid"
+                data-felt-rows={feltLayout.rowCount}
+                data-felt-scale={feltLayout.scale.toFixed(2)}
+              >
+                {feltLayout.placements.map((placement) => {
+                  const meld = meldsById.get(placement.id);
+                  if (!meld) return null;
+                  const meldIndex = placement.order;
                   const validation = validateMeld(meld.tileIds, game.tiles);
-                  const jokerAssignments = resolveJokerAssignments(meld.tileIds, game.tiles);
+                  const wildcardAssignments = resolveWildcardAssignments(meld.tileIds, game.tiles);
                   return (
                     <div
-                      className={`meld ${validation.valid ? "is-valid" : "is-invalid"} ${draggedItem?.type === "meld" && draggedItem.meldId === meld.id ? "is-dragging" : ""} ${dropTargetMeldId === meld.id ? "is-drop-target" : ""}`}
+                      className={`meld ${validation.valid ? "is-valid" : "is-invalid"} ${newActivityMelds.has(meld.id) ? "is-new-activity" : ""} ${draggedItem?.type === "meld" && draggedItem.meldId === meld.id ? "is-dragging" : ""} ${dropTargetMeldId === meld.id ? "is-drop-target" : ""}`}
                       key={meld.id}
+                      data-felt-row={placement.row + 1}
+                      style={{
+                        "--felt-x": `${placement.x}px`,
+                        "--felt-y": `${placement.y}px`,
+                        "--felt-scale": feltLayout.scale,
+                        "--felt-meld-width": `${placement.width / feltLayout.scale}px`,
+                      } as CSSProperties}
                       draggable={isMyTurn}
                       aria-label={`Meld ${meldIndex + 1}, ${validation.valid ? validation.kind : "unfinished"}.${selectedTileIds.length > 0 ? ` Click to add ${selectedTileIds.length === 1 ? "the selected tile" : `${selectedTileIds.length} selected tiles`}.` : " Drag to merge with another meld."}`}
                       onClick={(event) => {
@@ -1366,10 +1716,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                             <TileView
                               key={tileId}
                               tile={tile}
-                              jokerAssignment={jokerAssignments[tileId]}
-                              jokerOnTable
+                              wildcardAssignment={wildcardAssignments[tileId]}
+                              wildcardOnTable
                               selected={selectedTileIds.includes(tileId)}
-                              recentlyPlayed={recentlyPlayedTiles.has(tileId)}
+                              newActivity={newActivityTiles.has(tileId)}
                               disabled={!isMyTurn}
                           keyShortcuts="Shift+Enter Alt+Enter Control+A Meta+A"
                           onClick={(event) => handleTileClick(event, tileId)}
@@ -1385,9 +1735,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                       <span className="meld-status">{validation.valid ? validation.kind : "unfinished"}</span>
                     </div>
                   );
-                    })}
-                  </div>
-                ))}
+                })}
               </div>
             )}
 
@@ -1407,30 +1755,53 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
             <AssistControls game={game} busy={busy} onToggle={(assistId, enabled) => void changeAssist(assistId, enabled)} />
           </aside>
         )}
+        {showAppearance && (
+          <aside className="activity-panel appearance-panel">
+            <div className="activity-heading"><Palette /><div><span className="eyebrow">Your setup</span><h2>Appearance</h2></div></div>
+            <p className="appearance-panel-copy">Mix any room color with any tile set. Your choices stay on this device.</p>
+            <fieldset className="appearance-group">
+              <legend>Room color</legend>
+              <div className="appearance-options">
+                {COLOR_THEMES.map((theme) => (
+                  <label className={`appearance-choice ${theme.className}`} key={theme.id}>
+                    <input
+                      type="radio"
+                      name="color-theme"
+                      value={theme.id}
+                      checked={colorThemeId === theme.id}
+                      onChange={(event) => changeColorTheme(event.target.value)}
+                    />
+                    <span className="appearance-color-preview" aria-hidden="true"><i /><i /><i /></span>
+                    <span><strong>{theme.name}</strong><small>{theme.note}</small></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset className="appearance-group">
+              <legend>Tile set</legend>
+              <div className="appearance-options">
+                {TILE_THEMES.map((theme) => (
+                  <label className={`appearance-choice ${theme.className}`} key={theme.id}>
+                    <input
+                      type="radio"
+                      name="tile-theme"
+                      value={theme.id}
+                      checked={tileThemeId === theme.id}
+                      onChange={(event) => changeTileTheme(event.target.value)}
+                    />
+                    <span className="appearance-tile-preview" aria-hidden="true">7</span>
+                    <span><strong>{theme.name}</strong><small>{theme.note}</small></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </aside>
+        )}
       </div>
 
       <section className={`rack-zone ${isMyTurn ? "is-active" : ""}`}>
         <div className="rack-heading">
-          <div className="rack-title-block">
-            <span className="eyebrow">Your rack</span><h2>{me?.name} <small>{draftRack.length} tiles</small></h2>
-            <div className="rack-keyboard-start">
-              <button type="button" disabled={!isMyTurn || draftRack.length === 0} onClick={() => focusTileNavigation()} aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"><Keyboard /> Focus tiles <kbd aria-hidden="true">← ↑ ↓ →</kbd></button>
-              <small className="rack-hold-hint">
-                {focusedTileId
-                  ? <><b>{tileName(focusedTileId)}</b> focused in blue · {selectedTileIds.length > 0 ? `${selectedTileIds.length} selected in yellow` : "Space selects in yellow"}</>
-                  : "Start here, then arrows move · Space selects"}
-              </small>
-            </div>
-          </div>
           <div className="rack-tools">
-            <span>Sort</span>
-            <button
-              type="button"
-              className={!rackAutoSort ? "is-active" : ""}
-              aria-pressed={!rackAutoSort}
-              title="Turn off autosorting and arrange tiles yourself"
-              onClick={disableRackAutoSort}
-            >Off</button>
             <button
               type="button"
               className={rackAutoSort && rackSortMode === "color-first" ? "is-active" : ""}
@@ -1458,8 +1829,37 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           role="grid"
           aria-label={`Your rack, ${rackAutoSort ? "autosorted" : "manual arrangement"}`}
           style={{ "--rack-slots-per-row": draftRackLayout.slotsPerRow } as CSSProperties}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => drop(event, { type: "rack" })}
+          onDragOver={(event) => {
+            event.preventDefault();
+            const item = readDragItem(event);
+            if (item?.type !== "tiles") return;
+            const slot = rackSlotAtPoint(event.currentTarget, event.clientX, event.clientY);
+            const slotIndex = Number.parseInt(slot?.dataset.rackSlot ?? "", 10);
+            if (!slot || !Number.isInteger(slotIndex)) return;
+            setRackDropTarget({
+              slotIndex,
+              side: rackDropSideForElement(slot, event.clientX),
+            });
+          }}
+          onDragLeave={(event) => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+              setRackDropTarget(null);
+            }
+          }}
+          onDrop={(event) => {
+            const slot = rackSlotAtPoint(event.currentTarget, event.clientX, event.clientY);
+            const slotIndex = Number.parseInt(slot?.dataset.rackSlot ?? "", 10);
+            if (slot && Number.isInteger(slotIndex)) {
+              event.preventDefault();
+              drop(event, {
+                type: "rack",
+                slotIndex,
+                side: rackDropSideForElement(slot, event.clientX),
+              });
+            } else {
+              drop(event, { type: "rack" });
+            }
+          }}
         >
           {rackRows.map((row, rowIndex) => (
             <div className="rack-level" data-rack-row={rowIndex + 1} role="row" key={rowIndex}>
@@ -1468,8 +1868,9 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                 const tile = tileId ? game.tiles[tileId] : null;
                 return (
                 <div
-                  className={`rack-slot ${tile ? "is-occupied" : "is-empty"} ${tileId && autosortedMeldTileIds.has(tileId) ? "is-meld" : ""}`}
+                  className={`rack-slot ${tile ? "is-occupied" : "is-empty"} ${tileId && autosortedMeldTileIds.has(tileId) ? "is-meld" : ""} ${rackDropTarget?.slotIndex === slotIndex && draggedItem?.type === "tiles" ? "is-drop-target" : ""}`}
                   data-rack-slot={slotIndex}
+                  data-rack-drop-side={rackDropTarget?.slotIndex === slotIndex ? rackDropTarget.side : undefined}
                   data-rack-meld={tileId && autosortedMeldTileIds.has(tileId) ? "true" : undefined}
                   role="gridcell"
                   aria-label={tile
@@ -1477,23 +1878,30 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                     : `Empty rack row ${rowIndex + 1}, slot ${columnIndex + 1}`}
                   key={slotIndex}
                   onDragOver={(event) => {
-                    if (!isMyTurn || rackAutoSort) return;
                     event.preventDefault();
                     event.stopPropagation();
                     event.dataTransfer.dropEffect = "move";
+                    if (draggedItem?.type === "tiles") {
+                      setRackDropTarget({ slotIndex, side: rackDropSideForEvent(event) ?? "before" });
+                    }
+                  }}
+                  onDragLeave={(event) => {
+                    const relatedTarget = event.relatedTarget;
+                    if (!(relatedTarget instanceof Node) || !event.currentTarget.contains(relatedTarget)) {
+                      setRackDropTarget((current) => current?.slotIndex === slotIndex ? null : current);
+                    }
                   }}
                   onDrop={(event) => {
-                    if (rackAutoSort) return;
                     event.stopPropagation();
-                    drop(event, { type: "rack", slotIndex });
+                    drop(event, { type: "rack", slotIndex, side: rackDropSideForEvent(event) });
                   }}
                 >
                   {tile && (
                   <TileView
                     tile={tile}
                     selected={selectedTileIds.includes(tile.id)}
-                    disabled={!isMyTurn}
-                    keyShortcuts="Shift+Enter Alt+Enter Control+A Meta+A"
+                    newActivity={newActivityTiles.has(tile.id)}
+                    keyShortcuts={isMyTurn ? "Shift+Enter Alt+Enter Control+A Meta+A" : undefined}
                     onClick={(event) => handleTileClick(event, tile.id)}
                     onFocus={() => handleTileFocus(tile.id)}
                     onKeyDown={(event) => handleTileKeyDown(event, tile.id)}
@@ -1536,13 +1944,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                 }}>{draggedItem?.type === "meld" ? "Cancel meld move" : "Clear selection"} <kbd aria-hidden="true">Esc</kbd></button>
               </div>
             )}
-          </div>
-          <div
-            className={`action-buttons ${!isMyTurn || game.status !== "playing" ? "layout-placeholder" : ""}`}
-            aria-hidden={!isMyTurn || game.status !== "playing"}
-          >
-            <button className="secondary-button" type="button" disabled={!isMyTurn || busy} onClick={drawAndEnd} aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"><ArrowDownToLine /> <span>Draw & end</span><kbd aria-hidden="true">{shortcutModifier}⇧↵</kbd></button>
-            <button className="primary-button" type="button" disabled={!isMyTurn || !canCommit || busy} onClick={commitTurn} aria-keyshortcuts="Control+Enter Meta+Enter"><Check /> <span>Commit turn</span><kbd aria-hidden="true">{shortcutModifier}↵</kbd></button>
           </div>
         </div>
       </section>

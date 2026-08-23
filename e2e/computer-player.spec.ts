@@ -133,6 +133,11 @@ async function expectFullPlayerRow(page: Page, cardSelector: string): Promise<vo
   }
 }
 
+function expectSeparateRows(first: ElementLayout, second: ElementLayout, message: string): void {
+  const [top, bottom] = [first, second].sort((left, right) => left.y - right.y);
+  expect(bottom!.y, message).toBeGreaterThanOrEqual(top!.y + top!.height);
+}
+
 test("configures a basic computer, reveals its rack, and observes its autonomous turn", async ({ page }) => {
   test.setTimeout(60_000);
   const playerName = `Bot host ${Date.now().toString(36).slice(-7)}`;
@@ -317,12 +322,12 @@ test("keeps two computer rack toggles inside their cards and expands each player
   await expect(secondCard.locator(".computer-rack-inline")).toHaveCount(0);
   await expectFullPlayerRow(page, ".player-card.is-computer.is-rack-open");
 
-  const firstOpenBoxes = await cards.evaluateAll((elements) => elements.map((element) => {
-    const { y, width, height } = element.getBoundingClientRect();
-    return { y, width, height };
-  }));
-  expect(firstOpenBoxes[1]!.y).toBeGreaterThanOrEqual(firstOpenBoxes[0]!.y + firstOpenBoxes[0]!.height);
-  expect(firstOpenBoxes[1]!.width).toBeCloseTo(closedBoxes[1]!.width, 5);
+  const firstOpenBox = await firstCard.boundingBox();
+  const secondClosedBox = await secondCard.boundingBox();
+  expect(firstOpenBox).not.toBeNull();
+  expect(secondClosedBox).not.toBeNull();
+  expectSeparateRows(firstOpenBox!, secondClosedBox!, "an expanded computer card should not overlap the other card");
+  expect(secondClosedBox!.width).toBeCloseTo(closedBoxes[0]!.width, 5);
 
   let storedOpenIds = JSON.parse(await page.evaluate(
     (preferenceKey) => localStorage.getItem(preferenceKey) ?? "[]",
@@ -340,11 +345,11 @@ test("keeps two computer rack toggles inside their cards and expands each player
   await expect(secondCard.locator(".computer-rack-inline")).toBeVisible();
   await expectFullPlayerRow(page, ".player-card.is-computer.is-rack-open");
 
-  const openBoxes = await cards.evaluateAll((elements) => elements.map((element) => {
-    const { y, height } = element.getBoundingClientRect();
-    return { y, height };
-  }));
-  expect(openBoxes[1]!.y).toBeGreaterThanOrEqual(openBoxes[0]!.y + openBoxes[0]!.height);
+  const firstExpandedBox = await firstCard.boundingBox();
+  const secondExpandedBox = await secondCard.boundingBox();
+  expect(firstExpandedBox).not.toBeNull();
+  expect(secondExpandedBox).not.toBeNull();
+  expectSeparateRows(firstExpandedBox!, secondExpandedBox!, "expanded computer cards should not overlap");
 
   state = await getGameState(page, roomCode);
   for (const computer of [firstComputer, secondComputer]) {
