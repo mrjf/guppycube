@@ -394,7 +394,7 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
   }
 });
 
-test("spreads manual slots edge to edge, rearranges while waiting, persists the layout, and resumes both sorts", async ({ browser }) => {
+test("keeps manual slots at a fixed pitch, rearranges while waiting, persists the layout, and resumes both sorts", async ({ browser }) => {
   test.setTimeout(60_000);
   const rackGame = await createRackGame();
   let context: BrowserContext | undefined;
@@ -443,11 +443,13 @@ test("spreads manual slots edge to edge, rearranges while waiting, persists the 
         .toBeLessThan(2);
     });
     for (const row of rowGeometry) {
-      expect(row.slotLefts[0]! - row.left, "first landing spot should reach the rack's left edge")
-        .toBeLessThanOrEqual(14);
-      expect(row.right - row.slotRights.at(-1)!, "last landing spot should reach the rack's right edge")
-        .toBeLessThanOrEqual(14);
+      const gaps = row.slotLefts.slice(1).map((left, index) => left - row.slotRights[index]!);
+      expect(Math.max(...gaps) - Math.min(...gaps), "manual slot gaps should stay fixed across the row")
+        .toBeLessThan(2);
     }
+    const rowGaps = rowGeometry[0]!.slotLefts.slice(1).map((left, index) => left - rowGeometry[0]!.slotRights[index]!);
+    const secondRowGaps = rowGeometry[1]!.slotLefts.slice(1).map((left, index) => left - rowGeometry[1]!.slotRights[index]!);
+    expect(rowGaps).toEqual(secondRowGaps);
 
     const tileMovedToTableId = await page.locator(".rack .tile").first().getAttribute("data-tile-id");
     expect(tileMovedToTableId).not.toBeNull();
@@ -492,14 +494,15 @@ test("spreads manual slots edge to edge, rearranges while waiting, persists the 
     );
     await expect(page.locator(`.rack-slot[data-rack-slot="${occupiedDestinationIndex}"] .tile[data-tile-id="${movedTileId}"]`))
       .toBeVisible();
-    await expect(page.locator(`.rack-slot[data-rack-slot="${emptyTargetIndex}"] .tile[data-tile-id="${displacedTileId}"]`))
-      .toBeVisible();
+    const pushedSnapshot = await rackSlotSnapshot(page);
+    const pushedTileIndex = pushedSnapshot.indexOf(displacedTileId!);
+    expect(pushedTileIndex).toBeGreaterThanOrEqual(0);
+    expect(pushedTileIndex % 2).toBe(Number(occupiedDestinationIndex) % 2);
+    expect(Math.floor(pushedTileIndex / 2)).toBeGreaterThan(Math.floor(Number(occupiedDestinationIndex) / 2));
 
     await page.getByRole("button", { name: "Reset turn" }).click();
     await expect(page.locator(".meld")).toHaveCount(0);
     await expect(page.locator(`.rack-slot[data-rack-slot="${occupiedDestinationIndex}"] .tile[data-tile-id="${movedTileId}"]`))
-      .toBeVisible();
-    await expect(page.locator(`.rack-slot[data-rack-slot="${emptyTargetIndex}"] .tile[data-tile-id="${displacedTileId}"]`))
       .toBeVisible();
 
     const manualLayout = await rackSlotSnapshot(page);
@@ -698,7 +701,7 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Control+Enter");
     await expect(page.getByText(/Turn not ready\./)).toBeAttached();
 
-    await page.keyboard.press("Control+Shift+Enter");
+    await page.keyboard.press("Meta+Shift+Enter");
     await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
   } finally {
     await context?.close();

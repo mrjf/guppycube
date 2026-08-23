@@ -286,7 +286,9 @@ for (const remotePlayer of [
     expect(await animatedTiles.first().evaluate((tile) => ({
       name: getComputedStyle(tile).animationName,
       duration: getComputedStyle(tile).animationDuration,
-    }))).toEqual({ name: "new-activity-fade-in", duration: "0.68s" });
+    }))).toEqual({ name: "new-activity-fade-in", duration: "1.35s" });
+    await expect(page.locator(".meld.is-new-activity")).toHaveCount(1);
+    await expect(page.locator(".meld.is-new-activity .meld-activity-label")).toHaveCount(0);
 
     controlled.sendState(stateWithLocalCommit(remotePlay));
     await expect(tableTiles).toHaveCount(
@@ -308,5 +310,6 @@ for (const remotePlayer of [
     await expect(newRackTile).toBeVisible();
     await expect(newRackTile).toHaveClass(/\bis-new-activity\b/);
     expect(await newRackTile.evaluate((tile) => getComputedStyle(tile).animationName)).toBe("new-activity-fade-in");
+    await expect(page.locator(".player-card.is-me .player-action-flash")).toContainText("drew a tile");
   });
 }

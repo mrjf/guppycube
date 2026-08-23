@@ -253,7 +253,7 @@ function meldSignatures(layout: MeldLayout): string[] {
   return layout.melds.map((meld) => meld.tileIds.join("|"));
 }
 
-test("uses a stable canonical order and best-fits complementary meld widths into fewer rows", async ({ page, request }) => {
+test("uses stable board order and vertical-first placement across resizes", async ({ page, request }) => {
   test.setTimeout(30_000);
   await page.setViewportSize({ width: 1400, height: 900 });
   await startTwoPlayerGame(page, request);
@@ -263,25 +263,26 @@ test("uses a stable canonical order and best-fits complementary meld widths into
   await settleFeltLayout(page);
   const wideLayout = await readMeldLayout(page);
   expect(wideLayout.scale).toBe(1);
-  expect(wideLayout.rowCount).toBe(1);
-  expectRowsCentered(wideLayout, [[5, 4, 3, 2]]);
+  expect(wideLayout.rowCount).toBe(4);
+  expectRowsCentered(wideLayout, [[2], [5], [3], [4]]);
   expectCenteredAndContained(wideLayout);
   expectNoScrolling(wideLayout);
   const canonicalSignatures = meldSignatures(wideLayout);
 
   await page.reload();
   await expect(page.getByLabel("Game table")).toBeVisible();
-  await expect(page.locator(".meld-grid")).toHaveAttribute("data-felt-rows", "1");
+  await expect(page.locator(".meld-grid")).toHaveAttribute("data-felt-rows", "4");
   await settleFeltLayout(page);
-  expect(meldSignatures(await readMeldLayout(page)), "canonical display order should survive a reload")
+  expect(meldSignatures(await readMeldLayout(page)), "board display order should survive a reload")
     .toEqual(canonicalSignatures);
 
   await page.setViewportSize({ width: 520, height: 900 });
-  await expect(page.locator(".meld-grid")).toHaveAttribute("data-felt-rows", "2");
+  await expect(page.locator(".meld-grid")).toHaveAttribute("data-felt-rows", "4");
   await settleFeltLayout(page);
   const packedLayout = await readMeldLayout(page);
-  expect(packedLayout.scale, "full-size tiles should be retained while two rows fit").toBe(1);
-  expectRowsCentered(packedLayout, [[5, 2], [4, 3]]);
+  expect(packedLayout.scale, "full-size tiles should be retained while four rows fit").toBe(1);
+  expect(packedLayout.rowCount).toBe(4);
+  expectRowsCentered(packedLayout, [[2], [5], [3], [4]]);
   expectCenteredAndContained(packedLayout);
   expectNoScrolling(packedLayout);
 });

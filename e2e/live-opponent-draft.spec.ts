@@ -116,11 +116,7 @@ test("shows a human opponent's live table attempt without exposing their private
     await expect(viewerTable).toHaveClass(/\bis-watching-live\b/);
     await expect(viewerTable).toHaveClass(/\bhas-board-defect\b/);
     await expect(viewerTable).toHaveAccessibleName(/live attempt by .*Needs attention:/i);
-    await expect(viewer.page.locator(".table-drop-instruction")).toHaveClass(/\bis-watching\b/);
-    await expect(viewer.page.locator(".table-drop-instruction")).toHaveClass(/\bhas-defect\b/);
-    await expect(viewer.page.locator(".table-drop-instruction")).toContainText(
-      `Live ${active.name} is arranging the table`,
-    );
+    await expect(viewer.page.locator(".table-drop-instruction")).toHaveCount(0);
     await expect(viewer.page.locator(".meld.is-invalid")).toHaveCount(1);
     await expect(viewer.page.locator(".meld-status")).toHaveText("unfinished");
 
@@ -156,7 +152,7 @@ test("shows a human opponent's live table attempt without exposing their private
     await expect(viewer.page.locator(".table-surface .tile")).toHaveCount(0);
     await expect(viewerTable).not.toHaveClass(/\bis-watching-live\b/);
     await expect(viewerTable).not.toHaveClass(/\bhas-board-defect\b/);
-    await expect(viewer.page.locator(".table-drop-instruction")).toContainText("Watch the table");
+    await expect(viewer.page.locator(".table-drop-instruction")).toHaveCount(0);
     await expect.poll(async () => (await getGame(viewer.context, roomCode)).turnDraft).toEqual([]);
 
     const secondDraftResponse = active.page.waitForResponse((response) =>

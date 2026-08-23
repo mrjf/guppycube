@@ -61,7 +61,7 @@ describe("createFeltLayout", () => {
     expectContained(layout, 422, 300);
   });
 
-  it("uses the full width before adding rows", () => {
+  it("uses vertical space before adding a second meld to a row", () => {
     const layout = createFeltLayout(
       Array.from({ length: 12 }, (_, index) => meld(`meld-${index.toString().padStart(2, "0")}`, 1)),
       1_250,
@@ -69,9 +69,46 @@ describe("createFeltLayout", () => {
     );
 
     expect(layout.scale).toBe(1);
-    expect(layout.rowCount).toBe(1);
+    expect(layout.rowCount).toBe(3);
     expect(layout.placements).toHaveLength(12);
+    expect(layout.placements.filter(({ row }) => row === 0)).toHaveLength(4);
+    expect(layout.placements.filter(({ row }) => row === 1)).toHaveLength(4);
+    expect(layout.placements.filter(({ row }) => row === 2)).toHaveLength(4);
     expectContained(layout, 1_250, 300);
+  });
+
+  it("round-robins through four rows before filling their second positions", () => {
+    const layout = createFeltLayout(
+      Array.from({ length: 8 }, (_, index) => meld(`meld-${index}`, 1, `order-${index}`)),
+      1_250,
+      500,
+    );
+
+    expect(layout.rowCount).toBe(4);
+    expect(layout.placements.filter(({ row }) => row === 0).map(({ id }) => id)).toEqual(["meld-0", "meld-4"]);
+    expect(layout.placements.filter(({ row }) => row === 1).map(({ id }) => id)).toEqual(["meld-1", "meld-5"]);
+    expect(layout.placements.filter(({ row }) => row === 2).map(({ id }) => id)).toEqual(["meld-2", "meld-6"]);
+    expect(layout.placements.filter(({ row }) => row === 3).map(({ id }) => id)).toEqual(["meld-3", "meld-7"]);
+  });
+
+  it("keeps existing meld coordinates when a new meld gets the next vertical-first slot", () => {
+    const initialItems = Array.from({ length: 4 }, (_, index) => ({
+      ...meld(`meld-${index}`, 1),
+      placementOrder: index,
+    }));
+    const initial = createFeltLayout(initialItems, 1_250, 500);
+    const next = createFeltLayout([
+      ...initialItems,
+      { ...meld("meld-4", 1), placementOrder: 4 },
+    ], 1_250, 500, undefined, initial);
+
+    expect(next.rowCount).toBe(4);
+    for (const previous of initial.placements) {
+      const current = next.placements.find(({ id }) => id === previous.id);
+      expect(current, `${previous.id} should remain on the felt`).toBeDefined();
+      expect(current?.x).toBe(previous.x);
+      expect(current?.y).toBe(previous.y);
+    }
   });
 
   it("shrinks only when full-size rows cannot fit the felt", () => {
