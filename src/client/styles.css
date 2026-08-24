@@ -355,6 +355,22 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .poster-tile { display: grid; place-items: center; width: 70px; height: 92px; margin-left: -18px; border: 2px solid rgba(33,29,25,0.2); border-radius: 9px; background: #fffaf0; box-shadow: 4px 6px 0 rgba(33,29,25,0.17); font-family: Georgia, serif; font-size: 40px; font-weight: 700; }
 .poster-coral { color: var(--coral); transform: rotate(-8deg); }.poster-sun { color: var(--sun); transform: translateY(-12px) rotate(1deg); }.poster-ocean { color: var(--ocean); transform: rotate(6deg); }.poster-wildcard { color: var(--ink); transform: translateY(-5px) rotate(13deg); }.poster-wildcard svg { width: 42px; stroke-width: 1.45; }
 .home-footer { position: absolute; right: 0; bottom: 0; left: 0; display: flex; justify-content: space-between; padding: 18px max(24px, calc((100% - 1180px) / 2)); border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.history-section { position: relative; z-index: 1; width: min(1120px, calc(100% - 64px)); margin: 0 auto; padding: 20px 0 100px; }
+.history-heading { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 24px; }
+.history-heading h2 { margin: 8px 0 0; font-family: "Playfair Display", Georgia, serif; font-size: clamp(38px, 5vw, 62px); line-height: .88; letter-spacing: -.06em; }
+.history-heading h2 em { color: var(--coral); font-weight: 700; }
+.history-heading > p { max-width: 280px; margin: 0 0 4px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.history-heading .eyebrow { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.history-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 12px; }
+.history-card { position: relative; display: flex; flex-direction: column; align-items: flex-start; min-height: 164px; border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: rgba(255, 250, 240, .86); box-shadow: 3px 4px 0 rgba(33, 29, 25, .08); text-align: left; transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease; }
+.history-card:hover { border-color: var(--coral); box-shadow: 5px 7px 0 rgba(33, 29, 25, .1); transform: translateY(-2px); }
+.history-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.history-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--sun); }
+.history-status.is-playing i { background: var(--green); }.history-status.is-finished i { background: var(--ocean); }
+.history-card > strong { margin-top: 18px; color: var(--ink); font-family: Georgia, serif; font-size: 22px; }
+.history-players { width: 100%; overflow: hidden; margin-top: 8px; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.history-card small { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: auto; padding-top: 15px; color: var(--muted); font-size: 10px; }
+.history-card small svg { color: var(--coral); }
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(25, 21, 18, 0.62); backdrop-filter: blur(7px); }
@@ -567,6 +583,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .entry-card { width: min(520px, 100%); transform: none; }
   .hero-tiles { top: 34%; right: 5%; bottom: auto; opacity: 0.35; }
   .home-footer { position: relative; }
+  .history-heading { align-items: flex-start; flex-direction: column; gap: 16px; }
   .game-header { grid-template-columns: auto 1fr; gap: 10px; }.room-pill { position: absolute; left: 50%; transform: translateX(-50%); }.header-actions { min-width: 0; }.connection-pill { display: none; }
   .players-strip { padding-right: 290px; }.players-topline-actions { top: 8px; right: 12px; }.player-card { flex-basis: 200px; width: 200px; min-width: 200px; max-width: 200px; }.player-card.is-rack-open { flex-basis: 100%; width: 100%; max-width: none; }.player-card-copy, .player-card strong, .player-card .player-last-turn { width: 72px; max-width: 72px; }.player-card-copy { flex-basis: 72px; }.turn-clock { width: 166px; min-width: 166px; background: #eee4d6; }.top-turn-actions { gap: 6px; }.top-turn-actions button { min-height: 36px; padding-right: 10px; padding-left: 10px; font-size: 10px; white-space: nowrap; }.top-turn-actions svg { width: 14px; }.top-turn-actions kbd { font-size: 7px; min-width: 18px; }
   .activity-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 30; box-shadow: -12px 0 35px rgba(0,0,0,.2); }
@@ -598,6 +615,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .entry-card { padding: 8px 18px 22px; }.entry-tabs { margin-right: -10px; margin-left: -10px; }.mode-picker { grid-template-columns: 1fr; }
   .assist-policy-picker > label { grid-template-columns: 1fr; gap: 6px; }.assist-policy-picker select { width: 100%; }
   .home-footer { display: none; }
+  .history-section { width: calc(100% - 28px); padding-bottom: 70px; }
+  .history-heading h2 { font-size: 45px; }
   .rule-grid { grid-template-columns: 1fr; }.rules-panel { padding: 34px 22px; }.rules-panel h2 { padding-right: 30px; }.keyboard-guide { grid-template-columns: 1fr; padding: 16px; }.keyboard-guide dl { grid-template-columns: 1fr; }.keyboard-guide dl > div:nth-child(2) { border-top: 1px solid var(--line); }
   .lobby-card { margin-top: 20px; }.lobby-seats { grid-template-columns: 1fr; }.invite-code strong { font-size: 30px; }.computer-controls { grid-template-columns: 1fr 1fr; }.computer-controls label { grid-column: 1 / -1; }.computer-controls button { padding: 0 8px; }
   .game-header { min-height: 60px; padding: 0 12px; }.compact-mark b { display: none; }.room-pill { padding: 3px; }.room-pill span, .room-pill strong { display: none; }.header-actions { gap: 4px; }.header-actions select { width: 102px; }.header-actions .icon-button { width: 36px; height: 36px; }.desktop-only { display: none; }

@@ -11,6 +11,7 @@ import type {
   ApiError,
   CreateGameInput,
   GameSession,
+  GameHistoryResponse,
   HealthResponse,
   OkResponse,
   PlayerLink,
@@ -22,6 +23,7 @@ import type {
 import {
   decodePlayerLink,
   decodeSessionCookie,
+  decodeSessionCookies,
   encodePlayerLink,
   encodeSessionCookie,
   sessionCookieName,
@@ -117,6 +119,15 @@ function requestSession(request: Request, roomCode: string): SessionCredentials 
   const value = decodePlayerLink(new URL(request.url).searchParams.get("player"), roomCode);
   if (validators.sessionCredentials(value) && value.roomCode === roomCode) return value;
   return cookieSession(request, roomCode);
+}
+
+function querySession(request: Request, roomCode: string): SessionCredentials | undefined {
+  const value = decodePlayerLink(new URL(request.url).searchParams.get("player"), roomCode);
+  return validators.sessionCredentials(value) && value.roomCode === roomCode ? value : undefined;
+}
+
+function sessionFromHistoryCookie(value: unknown): SessionCredentials | undefined {
+  return validators.sessionCredentials(value) ? value : undefined;
 }
 
 function portableLink(context: Context<AppEnv>, session: SessionCredentials): PlayerLink {
@@ -362,6 +373,7 @@ app.get("/api/games/:room/link", async (context) => {
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   try {
     await context.env.GAME_ROOMS.getByName(roomCode).getPublicState(identity.playerId, identity.token);
+    if (querySession(context.req.raw, roomCode)) setSessionCookie(context, identity);
     return checkedJson(context, validators.playerLink, portableLink(context, identity));
   } catch (error) {
     return errorJson(
@@ -373,12 +385,46 @@ app.get("/api/games/:room/link", async (context) => {
   }
 });
 
+app.get("/api/games/history", async (context) => {
+  const sessions = new Map<string, SessionCredentials>();
+  for (const value of decodeSessionCookies(context.req.raw.headers.get("Cookie") ?? "")) {
+    const session = sessionFromHistoryCookie(value);
+    if (session && !sessions.has(session.roomCode)) sessions.set(session.roomCode, session);
+  }
+
+  const games = (await Promise.all([...sessions.values()].map(async (session): Promise<GameHistoryResponse["games"][number] | null> => {
+    try {
+      const state = await context.env.GAME_ROOMS
+        .getByName(session.roomCode)
+        .getPublicState(session.playerId, session.token);
+      return {
+        id: state.id,
+        mode: state.mode,
+        status: state.status,
+        maxPlayers: state.maxPlayers,
+        createdAt: state.createdAt,
+        updatedAt: state.updatedAt,
+        players: state.players.map(({ name, isComputer }) => ({ name, isComputer })),
+        winnerName: state.winnerId === null
+          ? null
+          : state.players.find((player) => player.id === state.winnerId)?.name ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }))).filter((game): game is GameHistoryResponse["games"][number] => game !== null)
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+
+  return checkedJson(context, validators.gameHistoryResponse, { games });
+});
+
 app.get("/api/games/:room", async (context) => {
   const roomCode = normalizeRoomCode(context.req.param("room"));
   const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   try {
     const state = await context.env.GAME_ROOMS.getByName(roomCode).getPublicState(identity.playerId, identity.token);
+    if (querySession(context.req.raw, roomCode)) setSessionCookie(context, identity);
     return checkedJson(context, validators.publicGameState, state);
   } catch (error) {
     return errorJson(

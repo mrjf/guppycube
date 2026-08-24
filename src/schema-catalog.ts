@@ -6,6 +6,7 @@ import {
   devProjectSchema,
   gameSessionSchema,
   gameEventSchema,
+  gameHistoryResponseSchema,
   healthResponseSchema,
   hubDiscoverySchema,
   joinGameInputSchema,
@@ -73,6 +74,14 @@ export const schemaCatalogEntries = [
     category: "business",
     description: "The player-specific game snapshot returned over HTTP and WebSocket.",
     schema: publicGameStateSchema,
+  },
+  {
+    key: "gameHistoryResponseSchema",
+    title: "Game history response",
+    typeName: "GameHistoryResponse",
+    category: "api",
+    description: "The cookie-authenticated list of current and finished tables saved in this browser.",
+    schema: gameHistoryResponseSchema,
   },
   {
     key: "storedPlayerSchema",

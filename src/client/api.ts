@@ -2,6 +2,7 @@ import type { ValidateFunction } from "ajv";
 import type {
   ComputerStrategyId,
   CreateGameInput,
+  GameHistoryResponse,
   GameSession,
   OkResponse,
   PlayerLink,
@@ -64,6 +65,10 @@ export async function joinGame(roomCode: string, name: string): Promise<GameSess
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
+}
+
+export async function getGameHistory(): Promise<GameHistoryResponse> {
+  return request(appPath("/api/games/history"), validators.gameHistoryResponse);
 }
 
 export async function getGame(session: GameSession): Promise<PublicGameState> {

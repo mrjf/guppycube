@@ -11,6 +11,16 @@ const gameModes = ["realtime", "correspondence"] as const;
 const gameStatuses = ["lobby", "playing", "finished"] as const;
 const eventKinds = ["created", "joined", "started", "played", "drew", "timeout", "won"] as const;
 
+const gameHistoryPlayerShape = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 20 },
+    isComputer: { type: "boolean" },
+  },
+  required: ["name", "isComputer"],
+} as const;
+
 export const TILE_COLORS = ["coral", "sun", "ocean", "ink"] as const;
 export const TILE_NUMBER_MIN = 1;
 export const TILE_NUMBER_MAX = 13;
@@ -432,6 +442,35 @@ export const playerLinkSchema = {
   required: ["link"],
 } as const;
 
+export const gameHistoryResponseSchema = {
+  $schema: dialect,
+  $id: "https://guppycube.local/schemas/game-history-response-v1",
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    games: {
+      type: "array",
+      maxItems: 100,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: identifier,
+          mode: { enum: gameModes },
+          status: { enum: gameStatuses },
+          maxPlayers: { type: "integer", minimum: 2, maximum: 4 },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          players: { type: "array", items: gameHistoryPlayerShape, minItems: 1, maxItems: 4 },
+          winnerName: { type: ["string", "null"], minLength: 1, maxLength: 20 },
+        },
+        required: ["id", "mode", "status", "maxPlayers", "createdAt", "updatedAt", "players", "winnerName"],
+      },
+    },
+  },
+  required: ["games"],
+} as const;
+
 export const okResponseSchema = {
   $schema: dialect,
   $id: "https://guppycube.local/schemas/ok-response",
@@ -670,6 +709,8 @@ export type SaveTurnDraftInput = FromSchema<typeof saveTurnDraftInputSchema>;
 export type GameSession = FromSchema<typeof gameSessionSchema>;
 export type SessionCredentials = FromSchema<typeof sessionCredentialsSchema>;
 export type PlayerLink = FromSchema<typeof playerLinkSchema>;
+export type GameHistoryResponse = FromSchema<typeof gameHistoryResponseSchema>;
+export type GameHistoryEntry = GameHistoryResponse["games"][number];
 export type OkResponse = FromSchema<typeof okResponseSchema>;
 export type HealthResponse = FromSchema<typeof healthResponseSchema>;
 export type ApiError = FromSchema<typeof apiErrorSchema>;

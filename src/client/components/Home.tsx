@@ -1,16 +1,17 @@
-import { ArrowRight, Clock3, Copy, Play, Users } from "lucide-react";
-import { useRef, useState } from "react";
+import { ArrowRight, ChevronRight, Clock3, Copy, History, Play, Users } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { DEFAULT_ASSIST_POLICY } from "../../shared/assists";
 import { ASSIST_DEFINITIONS, ASSIST_POLICIES } from "../../shared/types";
 import type { AssistPolicy, AssistPolicyMap, GameMode } from "../../shared/types";
+import type { GameHistoryEntry } from "../../schemas";
 import {
   formatTableNameInput,
   normalizeTableName,
   TABLE_NAME_MAX_LENGTH,
   TABLE_NAME_PATTERN,
 } from "../../shared/table-name";
-import { createGame, joinGame } from "../api";
+import { createGame, getGameHistory, joinGame } from "../api";
 import { appPath } from "../base-path";
 import { CatFaceIcon } from "./CatFaceIcon";
 
@@ -21,6 +22,7 @@ interface HomeProps {
 }
 
 export function Home({ initialRoom = "", onEnter, onShowRules }: HomeProps) {
+  const [history, setHistory] = useState<GameHistoryEntry[]>([]);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<GameMode>("realtime");
   const [maxPlayers, setMaxPlayers] = useState(4);
@@ -31,6 +33,18 @@ export function Home({ initialRoom = "", onEnter, onShowRules }: HomeProps) {
   const [error, setError] = useState("");
   const createTabRef = useRef<HTMLButtonElement>(null);
   const joinTabRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    getGameHistory()
+      .then(({ games }) => {
+        if (active) setHistory(games);
+      })
+      .catch(() => {
+        // An empty history should not prevent creating or joining a table.
+      });
+    return () => { active = false; };
+  }, []);
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     let nextTab: "create" | "join" | null = null;
@@ -150,6 +164,33 @@ export function Home({ initialRoom = "", onEnter, onShowRules }: HomeProps) {
           <span className="poster-tile poster-wildcard"><CatFaceIcon /></span>
         </div>
       </section>
+
+      {history.length > 0 && (
+        <section className="history-section" aria-labelledby="saved-games-heading">
+          <div className="history-heading">
+            <div>
+              <p className="eyebrow"><History size={15} /> Saved tables</p>
+              <h2 id="saved-games-heading">Pick up where<br /><em>you left off.</em></h2>
+            </div>
+            <p>These tables are tied to this browser. Open one to take your seat again.</p>
+          </div>
+          <div className="history-grid">
+            {history.map((game) => {
+              const status = game.status === "finished" ? "Finished" : game.status === "playing" ? "In progress" : "Waiting to start";
+              const players = game.players.map((player) => player.name).join(" · ");
+              const date = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(game.updatedAt);
+              return (
+                <button className="history-card" type="button" key={game.id} onClick={() => onEnter(game.id)}>
+                  <span className={`history-status is-${game.status}`}><i /> {status}</span>
+                  <strong>{game.id}</strong>
+                  <span className="history-players">{players}</span>
+                  <small>{game.winnerName ? `${game.winnerName} won · ` : ""}{date}<ChevronRight size={17} /></small>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </main>
   );
 }
