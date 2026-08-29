@@ -78,7 +78,7 @@ Independent of policy, rooms that never reach `end` expire: lobbies after 24 hou
 
 ### 3.5 A verifiable deal
 
-Today the shuffle uses `crypto.getRandomValues` directly, so nobody can check it. The record spec (§8) replaces it with a seeded shuffle: draw a 32-byte seed, publish its SHA-256 in the `start` event, derive seating and pool from it, reveal the seed at the end. The reference implementation is `docs/examples/seeded-shuffle.ts`; it is the same Fisher–Yates, with rejection sampling instead of the current `% (index + 1)` (which has a small modulo bias anyway). Cost: one `crypto.subtle.digest` per 8 random words.
+Today the shuffle uses `crypto.getRandomValues` directly, so nobody can check it. The record spec (§8) replaces it with a seeded start: draw a 32-byte seed, publish its SHA-256 in the `start` event, derive the highest-tile starter, turn order, deal, and pool from it, then reveal the seed at the end. The reference implementation is `docs/examples/seeded-shuffle.ts`; it uses Fisher–Yates with rejection sampling instead of the current `% (index + 1)` (which has a small modulo bias anyway). Cost: one `crypto.subtle.digest` per 8 random words.
 
 ### 3.6 Shared rules, published schemas
 
@@ -116,7 +116,7 @@ Third-party clients need three things from us, all cheap:
 3. **Server signatures.** Ed25519 over the head hash would let a player prove to a stranger that snagsby.com produced a record. It needs a secret, which the README currently promises the deployment has none of. Proposal: not in draft 1; the format leaves room.
 4. **Browser-side forwarding in our client.** It would need the token in page JavaScript. Proposal: keep the `HttpOnly` principle; server-side sinks cover the correspondence case, which is the one that needs it.
 5. **Retained records at a capability URL** make "share the replay" trivial but are the one case where we hold a finished game for months. Proposal: keep it opt-in (`keep`) and 90 days.
-6. **Name and extension.** `guppycube-record/1`, `<table>.guppycube.jsonl`, `application/x-ndjson`.
+6. **Name and extension.** `guppycube-record/2`, `<table>.guppycube.jsonl`, `application/x-ndjson`.
 
 ## 7. Build order
 

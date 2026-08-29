@@ -9,7 +9,7 @@ const extenderId = "ink-11-1";
 const rackOpening = ["coral-10-1", "coral-11-1", "coral-12-1"];
 const rackFillers = ["sun-1-1", "ocean-2-1", "sun-5-1"];
 
-interface Meld {
+interface GameSet {
   id: string;
   tileIds: string[];
 }
@@ -39,17 +39,17 @@ interface GameState {
   currentPlayerId: string;
   winnerId: null;
   poolCount: number;
-  board: Meld[];
+  board: GameSet[];
   players: PlayerState[];
   myPlayerId: string;
   myRack: string[];
-  turnDraft: Meld[] | null;
-  myTurnDraft: Meld[] | null;
+  turnDraft: GameSet[] | null;
+  myTurnDraft: GameSet[] | null;
   tiles: Record<string, {
     id: string;
     color: "coral" | "sun" | "ocean" | "ink";
     value: number;
-    wildcard: false;
+    wilcard: false;
   }>;
   history: Array<{
     id: string;
@@ -62,20 +62,20 @@ interface GameState {
   assistPolicy: {
     "no-move-alert": "default-on";
     "auto-draw": "default-off";
-    "rack-meld-highlights": "default-off";
+    "rack-set-highlights": "default-off";
   };
   enabledAssists: string[];
   noMovePossible: boolean;
 }
 
 interface MockController {
-  actionBodies: Array<{ action: { type: "commit"; board: Meld[] } }>;
+  actionBodies: Array<{ action: { type: "commit"; board: GameSet[] } }>;
   draftBodies: unknown[];
   state: () => GameState;
 }
 
 function tile(id: string, color: "coral" | "sun" | "ocean" | "ink", value: number) {
-  return { id, color, value, wildcard: false as const };
+  return { id, color, value, wilcard: false as const };
 }
 
 function initialState(): GameState {
@@ -106,7 +106,7 @@ function initialState(): GameState {
     currentPlayerId: targetPlayerId,
     winnerId: null,
     poolCount: 42,
-    board: [{ id: "meld-existing", tileIds: existingRun }],
+    board: [{ id: "set-existing", tileIds: existingRun }],
     players: [
       {
         id: targetPlayerId,
@@ -156,7 +156,7 @@ function initialState(): GameState {
     assistPolicy: {
       "no-move-alert": "default-on",
       "auto-draw": "default-off",
-      "rack-meld-highlights": "default-off",
+      "rack-set-highlights": "default-off",
     },
     enabledAssists: [],
     noMovePossible: false,
@@ -184,7 +184,7 @@ async function openControlledGame(page: Page): Promise<MockController> {
     const body = route.request().postDataJSON() as MockController["actionBodies"][number];
     actionBodies.push(body);
     const playedIds = new Set(
-      body.action.board.flatMap((meld) => meld.tileIds).filter((tileId) => !existingRun.includes(tileId)),
+      body.action.board.flatMap((set) => set.tileIds).filter((tileId) => !existingRun.includes(tileId)),
     );
     state = {
       ...state,
@@ -211,12 +211,12 @@ async function openControlledGame(page: Page): Promise<MockController> {
   expect(mainResponse?.ok()).toBe(true);
   await expect(page.getByLabel("Game table")).toBeVisible();
   await expect(page.getByText("Your turn", { exact: true })).toBeVisible();
-  await expect(page.getByText("Opening meld: 0 / 30", { exact: true })).toBeVisible();
+  await expect(page.getByText("Opening set: 0 / 30", { exact: true })).toBeVisible();
   return { actionBodies, draftBodies, state: () => structuredClone(state) };
 }
 
-async function placeRackMeld(page: Page, tileIds: string[]): Promise<void> {
-  const meldCount = await page.locator(".meld").count();
+async function placeRackSet(page: Page, tileIds: string[]): Promise<void> {
+  const setCount = await page.locator(".set").count();
   for (const tileId of tileIds) {
     const rackTile = page.locator(`.rack .tile[data-tile-id="${tileId}"]`);
     await rackTile.focus();
@@ -224,32 +224,32 @@ async function placeRackMeld(page: Page, tileIds: string[]): Promise<void> {
   }
   await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(tileIds.length);
   await page.locator(`.rack .tile[data-tile-id="${tileIds.at(-1)!}"]`).press("Alt+Enter");
-  await expect(page.locator(".meld")).toHaveCount(meldCount + 1);
-  await expect(page.locator(".meld").last()).toHaveClass(/\bis-valid\b/);
+  await expect(page.locator(".set")).toHaveCount(setCount + 1);
+  await expect(page.locator(".set").last()).toHaveClass(/\bis-valid\b/);
 }
 
 async function extendExistingRun(page: Page): Promise<void> {
-  const existingMeld = page.locator(".meld").filter({
+  const existingSet = page.locator(".set").filter({
     has: page.locator(`.tile[data-tile-id="${existingRun[0]}"]`),
   });
   const extender = page.locator(`.rack .tile[data-tile-id="${extenderId}"]`);
   await extender.focus();
   await extender.press("Space");
-  await existingMeld.evaluate((element) => {
+  await existingSet.evaluate((element) => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
-  await expect(existingMeld.locator(`.tile[data-tile-id="${extenderId}"]`)).toBeVisible();
-  await expect(existingMeld).toHaveClass(/\bis-valid\b/);
+  await expect(existingSet.locator(`.tile[data-tile-id="${extenderId}"]`)).toBeVisible();
+  await expect(existingSet).toHaveClass(/\bis-valid\b/);
 }
 
-test("blocks a table-only extension because it contributes zero rack-only opening points", async ({ page }) => {
+test("blocks a table-only extension during the opening turn", async ({ page }) => {
   const controlled = await openControlledGame(page);
   await extendExistingRun(page);
 
-  await expect(page.locator(".meld.is-invalid")).toHaveCount(0);
-  await expect(page.getByText("Opening meld: 0 / 30", { exact: true })).toBeVisible();
-  const reason = "Your opening melds total 0; you need at least 30.";
-  await expect(page.locator(".turn-guidance")).toHaveText(reason);
+  await expect(page.locator(".set.is-invalid")).toHaveCount(0);
+  await expect(page.getByText("Opening set: 0 / 30", { exact: true })).toBeVisible();
+  const reason = "Your opening turn can only use tiles from your rack; existing sets must stay unchanged.";
+  await expect(page.locator(".table-surface")).toHaveAttribute("aria-label", expect.stringContaining(reason));
   await expect(page.getByRole("button", { name: "Commit turn" })).toBeDisabled();
 
   await page.keyboard.press("Control+Enter");
@@ -257,39 +257,24 @@ test("blocks a table-only extension because it contributes zero rack-only openin
   expect(controlled.actionBodies).toEqual([]);
   expect(controlled.draftBodies).toHaveLength(1);
   expect(controlled.state().players.find((player) => player.id === targetPlayerId)?.opened).toBe(false);
-  expect(controlled.state().board).toEqual([{ id: "meld-existing", tileIds: existingRun }]);
+  expect(controlled.state().board).toEqual([{ id: "set-existing", tileIds: existingRun }]);
 });
 
-test("enables and submits a 30-plus rack-only opening that also extends an existing table run", async ({ page }) => {
+test("blocks a 30-plus rack-only opening that also extends an existing table run", async ({ page }) => {
   const controlled = await openControlledGame(page);
-  await placeRackMeld(page, rackOpening);
+  await placeRackSet(page, rackOpening);
   await extendExistingRun(page);
 
-  await expect(page.locator(".meld.is-invalid")).toHaveCount(0);
-  await expect(page.getByText("Opening meld: 33 / 30", { exact: true })).toBeVisible();
-  await expect(page.locator(".turn-guidance")).toHaveText("Your play is ready to commit.");
+  await expect(page.locator(".set.is-invalid")).toHaveCount(0);
+  await expect(page.getByText("Opening set: 33 / 30", { exact: true })).toBeVisible();
+  const reason = "Your opening turn can only use tiles from your rack; existing sets must stay unchanged.";
+  await expect(page.locator(".table-surface")).toHaveAttribute("aria-label", expect.stringContaining(reason));
   const commitButton = page.getByRole("button", { name: "Commit turn" });
-  await expect(commitButton).toBeEnabled();
+  await expect(commitButton).toBeDisabled();
+  await page.keyboard.press("Control+Enter");
+  await expect(page.locator(".sr-only")).toHaveText(`Turn not ready. ${reason}`);
 
-  const responsePromise = page.waitForResponse((response) =>
-    response.request().method() === "POST"
-    && new URL(response.url()).pathname.endsWith(`/api/games/${roomCode}/action`),
-  );
-  await commitButton.click();
-  expect((await responsePromise).ok()).toBe(true);
-  await expect(page.getByText("Your turn", { exact: true })).toHaveCount(0);
-
-  expect(controlled.actionBodies).toHaveLength(1);
-  const submittedBoard = controlled.actionBodies[0]!.action.board;
-  expect(submittedBoard).toHaveLength(2);
-  expect(submittedBoard.flatMap((meld) => meld.tileIds).sort()).toEqual([
-    ...existingRun,
-    extenderId,
-    ...rackOpening,
-  ].sort());
-  expect(controlled.draftBodies).toHaveLength(2);
-  const committed = controlled.state();
-  expect(committed.players.find((player) => player.id === targetPlayerId)?.opened).toBe(true);
-  expect(committed.myRack).toEqual(rackFillers);
-  expect(committed.currentPlayerId).toBe(otherPlayerId);
+  expect(controlled.actionBodies).toEqual([]);
+  expect(controlled.state().players.find((player) => player.id === targetPlayerId)?.opened).toBe(false);
+  expect(controlled.state().myRack).toEqual([extenderId, ...rackOpening, ...rackFillers]);
 });

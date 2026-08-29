@@ -5,7 +5,7 @@ import { basicComputerStrategy } from "../src/server/computer-strategies/basic";
 const tiles = createTileSet();
 
 describe("basic computer strategy", () => {
-  it("opens with a simple rack-only meld worth at least 30 points", () => {
+  it("opens with a simple rack-only set worth at least 30 points", () => {
     const action = basicComputerStrategy.chooseTurn({
       version: 1,
       board: [],
@@ -22,7 +22,7 @@ describe("basic computer strategy", () => {
     });
   });
 
-  it("draws when its only meld cannot meet the opening minimum", () => {
+  it("draws when its only set cannot meet the opening minimum", () => {
     expect(basicComputerStrategy.chooseTurn({
       version: 1,
       board: [],
@@ -32,7 +32,7 @@ describe("basic computer strategy", () => {
     })).toEqual({ type: "draw" });
   });
 
-  it("plays a lower-value meld after it has opened", () => {
+  it("plays a lower-value set after it has opened", () => {
     expect(basicComputerStrategy.chooseTurn({
       version: 4,
       board: [],

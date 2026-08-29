@@ -4,7 +4,7 @@ import {
   type Browser,
   type BrowserContext,
 } from "@playwright/test";
-import type { Meld, PublicGameState, Tile } from "../src/schemas";
+import type { GameSet, PublicGameState, Tile } from "../src/schemas";
 
 const appUrl = (process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173").replace(/\/+$/, "");
 
@@ -23,7 +23,7 @@ interface CurrentSeat {
 }
 
 interface OpeningMove {
-  melds: Meld[];
+  sets: GameSet[];
   points: number;
 }
 
@@ -46,7 +46,7 @@ async function createPlayingGame(browser: Browser, suffix: string): Promise<Play
         assistPolicy: {
           "no-move-alert": "disallowed",
           "auto-draw": "disallowed",
-          "rack-meld-highlights": "disallowed",
+          "rack-set-highlights": "disallowed",
         },
       },
     });
@@ -104,11 +104,11 @@ async function waitForTurnEnd(
   return observed;
 }
 
-function orderedMeld(tileIds: string[], tiles: Record<string, Tile>): { tileIds: string[]; points: number } | null {
+function orderedSet(tileIds: string[], tiles: Record<string, Tile>): { tileIds: string[]; points: number } | null {
   const selected = tileIds.map((id) => tiles[id]);
   if (selected.some((tile) => !tile)) return null;
-  const numbered = selected.filter((tile): tile is Tile => Boolean(tile && !tile.wildcard));
-  const wildcards = selected.filter((tile): tile is Tile => Boolean(tile?.wildcard));
+  const numbered = selected.filter((tile): tile is Tile => Boolean(tile && !tile.wilcard));
+  const wilcards = selected.filter((tile): tile is Tile => Boolean(tile?.wilcard));
   if (numbered.length === 0) return null;
 
   if (selected.length === 3 || selected.length === 4) {
@@ -146,11 +146,11 @@ function orderedMeld(tileIds: string[], tiles: Record<string, Tile>): { tileIds:
       ordered[index] = tile.id;
     }
     if (!fits) continue;
-    const availableWildcards = [...wildcards];
+    const availableWilcards = [...wilcards];
     for (let index = 0; index < ordered.length; index += 1) {
-      if (!ordered[index]) ordered[index] = availableWildcards.shift()?.id;
+      if (!ordered[index]) ordered[index] = availableWilcards.shift()?.id;
     }
-    if (ordered.some((id) => !id) || availableWildcards.length > 0) continue;
+    if (ordered.some((id) => !id) || availableWilcards.length > 0) continue;
     const end = start + selected.length - 1;
     return {
       tileIds: ordered as string[],
@@ -166,23 +166,23 @@ function findOpeningMove(state: GameState): OpeningMove | null {
   for (let mask = 1; mask < 1 << rack.length; mask += 1) {
     const tileIds = rack.filter((_, index) => (mask & (1 << index)) !== 0);
     if (tileIds.length < 3 || tileIds.length > 13) continue;
-    const meld = orderedMeld(tileIds, state.tiles);
-    if (meld) candidates.push({ mask, ...meld });
+    const set = orderedSet(tileIds, state.tiles);
+    if (set) candidates.push({ mask, ...set });
   }
 
   const search = (
     start: number,
     usedMask: number,
     points: number,
-    melds: Meld[],
+    sets: GameSet[],
   ): OpeningMove | null => {
-    if (points >= 30) return { melds, points };
+    if (points >= 30) return { sets, points };
     for (let index = start; index < candidates.length; index += 1) {
       const candidate = candidates[index]!;
       if ((candidate.mask & usedMask) !== 0) continue;
       const result = search(index + 1, usedMask | candidate.mask, points + candidate.points, [
-        ...melds,
-        { id: `timeout-opening-${melds.length + 1}`, tileIds: candidate.tileIds },
+        ...sets,
+        { id: `timeout-opening-${sets.length + 1}`, tileIds: candidate.tileIds },
       ]);
       if (result) return result;
     }
@@ -247,7 +247,7 @@ test("timeout draws a tile when the player made no play", async ({ browser }) =>
   }
 });
 
-test("timeout accepts a valid synchronized draft as the submitted turn", async ({ browser }) => {
+test("timeout applies the three-tile penalty to a synchronized draft", async ({ browser }) => {
   test.setTimeout(200_000);
   const { game, seat, opening } = await gameWithOpeningMove(browser);
   try {
@@ -257,7 +257,7 @@ test("timeout accepts a valid synchronized draft as the submitted turn", async (
       data: {
         turnStartedAt: seat.state.turnStartedAt,
         sequence: Date.now(),
-        board: opening.melds,
+        board: opening.sets,
       },
     });
     expect(saveResponse.ok()).toBe(true);
@@ -266,37 +266,36 @@ test("timeout accepts a valid synchronized draft as the submitted turn", async (
       getGame(seat.context, game.roomCode),
       getGame(seat.otherContext, game.roomCode),
     ]);
-    expect(savedForPlayer.myTurnDraft).toEqual(opening.melds);
+    expect(savedForPlayer.myTurnDraft).toEqual(opening.sets);
     expect(savedForPlayer.board).toEqual([]);
     expect(hiddenFromOpponent.myTurnDraft).toBeNull();
 
-    const playedTileIds = opening.melds.flatMap((meld) => meld.tileIds);
+    const playedTileIds = opening.sets.flatMap((set) => set.tileIds);
     const page = await seat.context.newPage();
     await page.goto(`${appUrl}/room/${game.roomCode}`);
-    await expect(page.locator(".meld.is-valid")).toHaveCount(opening.melds.length);
-    await expect(page.locator(".table-summary b")).toHaveText(`${playedTileIds.length} tiles down`);
+    await expect(page.locator(".set.is-valid")).toHaveCount(opening.sets.length);
+    await expect(page.locator(".sets .tile")).toHaveCount(playedTileIds.length);
     await expect(page.locator(".rack .tile")).toHaveCount(seat.state.myRack.length - playedTileIds.length);
     await expect(page.getByRole("button", { name: /Commit turn/ })).toBeEnabled();
 
     const after = await waitForTurnEnd(seat.context, game.roomCode, savedForPlayer);
 
-    expect(after.board.map((meld) => meld.tileIds)).toEqual(opening.melds.map((meld) => meld.tileIds));
-    expect([...after.myRack].sort()).toEqual(
-      seat.state.myRack.filter((tileId) => !playedTileIds.includes(tileId)).sort(),
-    );
-    expect(after.poolCount).toBe(seat.state.poolCount);
+    expect(after.board).toEqual([]);
+    expect(after.myRack).toHaveLength(seat.state.myRack.length + 3);
+    expect(after.myRack).toEqual(expect.arrayContaining(seat.state.myRack));
+    expect(after.poolCount).toBe(seat.state.poolCount - 3);
     expect(after.myTurnDraft).toBeNull();
     expect(after.history.at(-1)).toEqual(expect.objectContaining({
-      kind: "played",
+      kind: "timeout",
       playerId: seat.state.myPlayerId,
     }));
-    await expect(page.locator(".table-summary b")).toHaveText(`${playedTileIds.length} tiles down`);
+    await expect(page.locator(".sets .tile")).toHaveCount(0);
   } finally {
     await Promise.all([game.hostContext.close(), game.guestContext.close()]);
   }
 });
 
-test("timeout discards an invalid UI-synchronized draft and draws a tile", async ({ browser }) => {
+test("timeout discards an invalid UI-synchronized draft and draws the penalty", async ({ browser }) => {
   test.setTimeout(200_000);
   const game = await createPlayingGame(browser, `invalid-${Date.now().toString(36).slice(-6)}`);
   try {
@@ -313,8 +312,8 @@ test("timeout discards an invalid UI-synchronized draft and draws a tile", async
     );
     await page.locator(`.rack .tile[data-tile-id="${tileId}"]`).dblclick();
     expect((await draftResponsePromise).ok()).toBe(true);
-    await expect(page.locator(".meld.is-invalid")).toHaveCount(1);
-    await expect(page.locator(".meld-status")).toHaveCount(0);
+    await expect(page.locator(".set.is-invalid")).toHaveCount(1);
+    await expect(page.locator(".set-status")).toHaveCount(0);
 
     const [savedForPlayer, hiddenFromOpponent] = await Promise.all([
       getGame(seat.context, game.roomCode),
@@ -327,23 +326,23 @@ test("timeout discards an invalid UI-synchronized draft and draws a tile", async
     expect(hiddenFromOpponent.myTurnDraft).toBeNull();
 
     await page.reload();
-    await expect(page.locator(".meld.is-invalid")).toHaveCount(1);
-    await expect(page.locator(`.meld .tile[data-tile-id="${tileId}"]`)).toBeVisible();
+    await expect(page.locator(".set.is-invalid")).toHaveCount(1);
+    await expect(page.locator(`.set .tile[data-tile-id="${tileId}"]`)).toBeVisible();
     await expect(page.locator(".rack .tile")).toHaveCount(seat.state.myRack.length - 1);
 
     const after = await waitForTurnEnd(seat.context, game.roomCode, savedForPlayer);
 
     expect(after.board).toEqual([]);
-    expect(after.myRack).toHaveLength(seat.state.myRack.length + 1);
+    expect(after.myRack).toHaveLength(seat.state.myRack.length + 3);
     expect(after.myRack).toEqual(expect.arrayContaining(seat.state.myRack));
-    expect(after.poolCount).toBe(seat.state.poolCount - 1);
+    expect(after.poolCount).toBe(seat.state.poolCount - 3);
     expect(after.myTurnDraft).toBeNull();
     expect(after.history.at(-1)).toEqual(expect.objectContaining({
       kind: "timeout",
       playerId: seat.state.myPlayerId,
     }));
-    await expect(page.locator(".meld")).toHaveCount(0);
-    await expect(page.locator(".rack .tile")).toHaveCount(seat.state.myRack.length + 1);
+    await expect(page.locator(".set")).toHaveCount(0);
+    await expect(page.locator(".rack .tile")).toHaveCount(seat.state.myRack.length + 3);
   } finally {
     await Promise.all([game.hostContext.close(), game.guestContext.close()]);
   }

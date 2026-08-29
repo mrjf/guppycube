@@ -32,11 +32,11 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { resolveWildcardAssignments, validateMeld, validateTurn } from "../../shared/rules";
-import { findLinkedRackTileIds, groupSortedRackTileIds, normalizeMeldTileIds, sortTileIds } from "../../shared/sorting";
+import { resolveWilcardAssignments, validateSet, validateTurn } from "../../shared/rules";
+import { findLinkedRackTileIds, groupSortedRackTileIds, normalizeSetTileIds, sortTileIds } from "../../shared/sorting";
 import type { TileSortMode } from "../../shared/sorting";
 import { ASSIST_DEFINITIONS } from "../../shared/types";
-import type { AssistId, ComputerStrategyId, GameEvent, GameSession, Meld, PublicGameState } from "../../shared/types";
+import type { AssistId, ComputerStrategyId, GameEvent, GameSession, GameSet, PublicGameState } from "../../shared/types";
 import { validators } from "../../validation";
 import { addComputer, ApiRequestError, getGame, getPlayerLink, saveTurnDraft, setAssist, socketUrl, startGame, takeAction } from "../api";
 import { createFeltLayout } from "../felt-layout";
@@ -73,15 +73,15 @@ interface GameProps {
 
 type MoveTarget =
   | { type: "rack"; slotIndex?: number; side?: RackDropSide }
-  | { type: "new"; meldId?: string }
-  | { type: "meld"; meldId: string };
+  | { type: "new"; setId?: string }
+  | { type: "set"; setId: string };
 
 type DragItem =
   | { type: "tiles"; tileIds: string[] }
-  | { type: "meld"; meldId: string };
+  | { type: "set"; setId: string };
 
 interface TurnDraft {
-  board: Meld[];
+  board: GameSet[];
   rackLayout: RackLayout;
 }
 
@@ -156,35 +156,60 @@ function tileButtons(root: ParentNode): HTMLButtonElement[] {
   return [...root.querySelectorAll<HTMLButtonElement>(ENABLED_TILE_SELECTOR)];
 }
 
+function tileIdFromEventTarget(target: EventTarget | null): string | null {
+  if (!(target instanceof HTMLElement)) return null;
+  return target.closest<HTMLElement>(ENABLED_TILE_SELECTOR)?.dataset.tileId ?? null;
+}
+
 function navigableGameElements(root: ParentNode, current: HTMLElement): HTMLElement[] {
-  const rackTiles = tileButtons(root).filter((tile) => !tile.closest(".meld-tiles"));
-  const melds = [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")];
-  const currentMeld = current.closest<HTMLElement>(".meld");
-  if (!currentMeld) return [...rackTiles, ...melds];
+  const rackTiles = tileButtons(root).filter((tile) => !tile.closest(".set-tiles"));
+  const sets = [...root.querySelectorAll<HTMLElement>(".set[data-set-id]")];
+  const currentSet = current.closest<HTMLElement>(".set");
+  if (!currentSet) return [...rackTiles, ...sets];
 
   return [
     ...rackTiles,
-    ...tileButtons(currentMeld),
-    ...melds.filter((meld) => meld !== currentMeld),
+    ...tileButtons(currentSet),
+    ...sets.filter((set) => set !== currentSet),
   ];
 }
 
-function meldsInRow(root: ParentNode, row: string | undefined): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")]
-    .filter((meld) => meld.dataset.feltRow === row)
+function setsInRow(root: ParentNode, row: string | undefined): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(".set[data-set-id]")]
+    .filter((set) => set.dataset.feltRow === row)
     .sort((left, right) => left.getBoundingClientRect().left - right.getBoundingClientRect().left);
 }
 
 function rackTiles(root: ParentNode): HTMLButtonElement[] {
-  return tileButtons(root).filter((tile) => !tile.closest(".meld-tiles"));
+  return tileButtons(root).filter((tile) => !tile.closest(".set-tiles"));
 }
 
-function firstMeldInRow(current: HTMLElement, key: "ArrowLeft" | "ArrowRight"): HTMLElement | null {
+function horizontalSetSequenceTarget(
+  current: HTMLElement,
+  key: "ArrowLeft" | "ArrowRight",
+): HTMLElement | null {
   const root = current.closest(".game-shell");
-  const meld = current.closest<HTMLElement>(".meld");
-  if (!root || !meld) return null;
-  const row = meldsInRow(root, meld.dataset.feltRow);
-  return key === "ArrowLeft" ? row.at(-1) ?? null : row[0] ?? null;
+  const currentSet = current.closest<HTMLElement>(".set");
+  if (!root || !currentSet) return null;
+
+  const row = setsInRow(root, currentSet.dataset.feltRow);
+  const setIndex = row.indexOf(currentSet);
+  if (setIndex < 0) return null;
+
+  const setTiles = tileButtons(currentSet);
+  if (current === currentSet) {
+    if (key === "ArrowRight") return setTiles[0] ?? currentSet;
+    const previousSet = row[(setIndex - 1 + row.length) % row.length];
+    return previousSet ? tileButtons(previousSet).at(-1) ?? previousSet : null;
+  }
+
+  const tileIndex = setTiles.indexOf(current as HTMLButtonElement);
+  if (tileIndex < 0) return null;
+  if (key === "ArrowLeft") return tileIndex > 0 ? setTiles[tileIndex - 1] ?? currentSet : currentSet;
+
+  if (tileIndex < setTiles.length - 1) return setTiles[tileIndex + 1] ?? currentSet;
+  const nextSet = row[(setIndex + 1) % row.length];
+  return nextSet ?? currentSet;
 }
 
 function verticalWrapTarget(
@@ -193,58 +218,100 @@ function verticalWrapTarget(
 ): HTMLElement | null {
   const root = current.closest(".game-shell");
   if (!root) return null;
-  const feltMelds = [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")]
+  const feltSets = [...root.querySelectorAll<HTMLElement>(".set[data-set-id]")]
     .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top
       || left.getBoundingClientRect().left - right.getBoundingClientRect().left);
   const rack = rackTiles(root);
-  const currentMeld = current.closest<HTMLElement>(".meld");
+  const currentSet = current.closest<HTMLElement>(".set");
 
-  if (currentMeld && feltMelds.length > 0) {
-    const edgeMeld = key === "ArrowUp" ? feltMelds[0] : feltMelds.at(-1);
-    if (currentMeld === edgeMeld) {
+  if (currentSet && feltSets.length > 0) {
+    const edgeSet = key === "ArrowUp" ? feltSets[0] : feltSets.at(-1);
+    if (currentSet === edgeSet) {
       return key === "ArrowUp" ? rack.at(-1) ?? null : rack[0] ?? null;
     }
   }
 
-  if (current.classList.contains("tile") && !current.closest(".meld-tiles") && rack.length > 0) {
-    if (key === "ArrowDown" && current === rack.at(-1)) return feltMelds[0] ?? null;
+  if (current.classList.contains("tile") && !current.closest(".set-tiles") && rack.length > 0) {
+    const currentLevel = current.closest<HTMLElement>(".rack-level");
+    const levels = [...root.querySelectorAll<HTMLElement>(".rack-level")];
+    const currentLevelIndex = currentLevel ? levels.indexOf(currentLevel) : -1;
+    const atRackEdge = key === "ArrowUp"
+      ? currentLevelIndex === 0
+      : currentLevelIndex === levels.length - 1;
+    if (atRackEdge) return key === "ArrowUp" ? feltSets.at(-1) ?? null : feltSets[0] ?? null;
   }
 
   return null;
 }
 
-function directionalMeld(
+function directionalRackTile(
   current: HTMLElement,
   key: "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ArrowUp",
 ): HTMLElement | null {
   const root = current.closest(".game-shell");
-  const currentMeld = current.closest<HTMLElement>(".meld");
-  if (!root || !currentMeld) return null;
+  const currentLevel = current.closest<HTMLElement>(".rack-level");
+  if (!root || !currentLevel) return null;
 
-  const currentBox = currentMeld.getBoundingClientRect();
+  const rowTiles = tileButtons(currentLevel).sort((left, right) =>
+    left.getBoundingClientRect().left - right.getBoundingClientRect().left,
+  );
+  if (key === "ArrowLeft" || key === "ArrowRight") {
+    if (rowTiles.length < 2) return null;
+    const currentIndex = rowTiles.indexOf(current as HTMLButtonElement);
+    if (currentIndex < 0) return null;
+    const nextIndex = key === "ArrowLeft"
+      ? (currentIndex - 1 + rowTiles.length) % rowTiles.length
+      : (currentIndex + 1) % rowTiles.length;
+    return rowTiles[nextIndex] ?? null;
+  }
+
+  const levels = [...root.querySelectorAll<HTMLElement>(".rack-level")];
+  const currentLevelIndex = levels.indexOf(currentLevel);
+  const targetLevel = levels[currentLevelIndex + (key === "ArrowUp" ? -1 : 1)];
+  if (!targetLevel) return null;
+
+  const currentBox = current.getBoundingClientRect();
+  const currentX = currentBox.left + currentBox.width / 2;
+  return tileButtons(targetLevel)
+    .map((candidate) => {
+      const box = candidate.getBoundingClientRect();
+      return { candidate, distance: Math.abs(box.left + box.width / 2 - currentX) };
+    })
+    .sort((left, right) => left.distance - right.distance)[0]?.candidate ?? null;
+}
+
+function directionalSet(
+  current: HTMLElement,
+  key: "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ArrowUp",
+): HTMLElement | null {
+  const root = current.closest(".game-shell");
+  const currentSet = current.closest<HTMLElement>(".set");
+  if (!root || !currentSet) return null;
+
+  const currentBox = currentSet.getBoundingClientRect();
   const currentX = currentBox.left + currentBox.width / 2;
   const currentY = currentBox.top + currentBox.height / 2;
   const horizontal = key === "ArrowLeft" || key === "ArrowRight";
   const direction = key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
 
-  const candidates = [...root.querySelectorAll<HTMLElement>(".meld[data-meld-id]")]
-    .filter((meld) => meld !== currentMeld)
-    .filter((meld) => !horizontal || meld.dataset.feltRow === currentMeld.dataset.feltRow);
+  const candidates = [...root.querySelectorAll<HTMLElement>(".set[data-set-id]")]
+    .filter((set) => set !== currentSet)
+    .filter((set) => !horizontal || set.dataset.feltRow === currentSet.dataset.feltRow);
   const next = candidates
-    .map((meld) => {
-      const box = meld.getBoundingClientRect();
+    .map((set) => {
+      const box = set.getBoundingClientRect();
       const dx = box.left + box.width / 2 - currentX;
       const dy = box.top + box.height / 2 - currentY;
       const primary = (horizontal ? dx : dy) * direction;
       const secondary = Math.abs(horizontal ? dy : dx);
-      return { meld, primary, score: primary + secondary * 3 };
+      return { set, primary, score: primary + secondary * 3 };
     })
     .filter(({ primary }) => primary > 2)
-    .sort((left, right) => left.score - right.score)[0]?.meld;
+    .sort((left, right) => left.score - right.score)[0]?.set;
 
   if (next) return next;
   if (!horizontal) return null;
-  const row = meldsInRow(root, currentMeld.dataset.feltRow);
+  const row = setsInRow(root, currentSet.dataset.feltRow);
   return key === "ArrowLeft" ? row.at(-1) ?? null : row[0] ?? null;
 }
 
@@ -261,30 +328,21 @@ function directionalTile(
   const horizontal = key === "ArrowLeft" || key === "ArrowRight";
   const direction = key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
 
-  const isRackTile = current.classList.contains("tile") && !current.closest(".meld-tiles");
-  const currentMeld = current.closest(".meld");
-  if (currentMeld && (key === "ArrowUp" || key === "ArrowDown" || (shiftKey && horizontal))) {
-    return directionalMeld(current, key);
+  const isRackTile = current.classList.contains("tile") && !current.closest(".set-tiles");
+  const currentSet = current.closest(".set");
+  if (isRackTile) {
+    const nextRackTile = directionalRackTile(current, key);
+    if (nextRackTile) return nextRackTile;
+    if (!horizontal) return verticalWrapTarget(current, key);
+    return null;
   }
-  if (currentMeld && horizontal) {
-    return tileButtons(currentMeld)
-      .filter((candidate) => candidate !== current)
-      .map((candidate) => {
-        const box = candidate.getBoundingClientRect();
-        const dx = box.left + box.width / 2 - currentX;
-        return { candidate, primary: dx * direction, score: dx * direction };
-      })
-      .filter(({ primary }) => primary > 2)
-      .sort((left, right) => left.score - right.score)[0]?.candidate ?? null;
+  if (currentSet && (key === "ArrowUp" || key === "ArrowDown" || (shiftKey && horizontal))) {
+    return directionalSet(current, key);
+  }
+  if (currentSet && horizontal) {
+    return horizontalSetSequenceTarget(current, key);
   }
   const candidates = navigableGameElements(root, current);
-
-  if (isRackTile && key === "ArrowUp") {
-    return candidates
-      .filter((candidate) => candidate.classList.contains("meld"))
-      .map((meld) => ({ meld, box: meld.getBoundingClientRect() }))
-      .sort((left, right) => right.box.bottom - left.box.bottom || left.box.left - right.box.left)[0]?.meld ?? null;
-  }
 
   return candidates
     .filter((candidate) => candidate !== current)
@@ -316,17 +374,30 @@ function timeLabel(deadline: number | null, now: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function boardKey(board: Meld[]): string {
+function boardKey(board: GameSet[]): string {
   return JSON.stringify(
     board
-      .map((meld) => [...meld.tileIds].sort().join("|"))
+      .map((set) => [...set.tileIds].sort().join("|"))
       .sort(),
+  );
+}
+
+function setMembershipKey(tileIds: string[]): string {
+  return [...new Set(tileIds)].sort().join("|");
+}
+
+function changedSetIds(board: GameSet[], originalBoard: GameSet[]): Set<string> {
+  const originalSetsById = new Map(originalBoard.map((set) => [set.id, setMembershipKey(set.tileIds)]));
+  return new Set(
+    board
+      .filter((set) => originalSetsById.get(set.id) !== setMembershipKey(set.tileIds))
+      .map((set) => set.id),
   );
 }
 
 function draftKey(draft: TurnDraft): string {
   return JSON.stringify({
-    board: draft.board.map((meld) => meld.tileIds),
+    board: draft.board.map((set) => set.tileIds),
     rackSlots: draft.rackLayout.slots,
   });
 }
@@ -337,9 +408,9 @@ function authoritativePositionKey(game: PublicGameState | null): string {
   return JSON.stringify({
     status: game.status,
     currentPlayerId: game.currentPlayerId,
-    board: game.board.map((meld) => meld.tileIds),
+    board: game.board.map((set) => set.tileIds),
     rack: [...game.myRack].sort(),
-    turnDraft: visibleOpponentDraft?.map((meld) => meld.tileIds) ?? null,
+    turnDraft: visibleOpponentDraft?.map((set) => set.tileIds) ?? null,
     opened: game.players.find((player) => player.id === game.myPlayerId)?.opened ?? false,
   });
 }
@@ -397,7 +468,7 @@ function AssistControls({
 
 export function Game({ session, onExit, onSessionMissing, onShowRules }: GameProps) {
   const [game, setGame] = useState<PublicGameState | null>(null);
-  const [draftBoard, setDraftBoard] = useState<Meld[]>([]);
+  const [draftBoard, setDraftBoard] = useState<GameSet[]>([]);
   const [draftRackLayout, setDraftRackLayout] = useState<RackLayout>(() => createRackLayout([]));
   const [rackLayoutOwnerKey, setRackLayoutOwnerKey] = useState<string | null>(null);
   const [turnHistory, setTurnHistory] = useState<TurnDraft[]>([]);
@@ -405,13 +476,13 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [selectedTileIds, setSelectedTileIds] = useState<string[]>([]);
   const [draggedItem, setDraggedItem] = useState<DragItem | null>(null);
   const [rackDropTarget, setRackDropTarget] = useState<{ slotIndex: number; side: RackDropSide } | null>(null);
-  const [dropTargetMeldId, setDropTargetMeldId] = useState<string | null>(null);
+  const [dropTargetSetId, setDropTargetSetId] = useState<string | null>(null);
   const [connection, setConnection] = useState<"connecting" | "online" | "offline">("connecting");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [interactionAnnouncement, setInteractionAnnouncement] = useState("");
   const [focusedTileId, setFocusedTileId] = useState<string | null>(null);
-  const [focusedMeldId, setFocusedMeldId] = useState<string | null>(null);
+  const [focusedSetId, setFocusedSetId] = useState<string | null>(null);
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
   const [copied, setCopied] = useState(false);
   const [portableLink, setPortableLink] = useState<string | null>(null);
@@ -449,9 +520,9 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const rackHoldTimer = useRef<number | null>(null);
   const rackHoldRun = useRef(0);
   const rackHoldPointerId = useRef<number | null>(null);
-  const multiTileDragPreview = useRef<HTMLSpanElement | null>(null);
+  const tileDragPreview = useRef<HTMLElement | null>(null);
   const suppressTileClick = useRef<string | null>(null);
-  const doubleClickMeldId = useRef<string | null>(null);
+  const doubleClickSetId = useRef<string | null>(null);
   const selectionAnchorId = useRef<string | null>(null);
   const actionRoomId = useRef<string | null>(null);
   const seenTurnActionIds = useRef<Set<string>>(new Set());
@@ -594,12 +665,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   useEffect(() => () => {
     if (actionFlashTimer.current !== null) window.clearTimeout(actionFlashTimer.current);
     if (newActivityTimer.current !== null) window.clearTimeout(newActivityTimer.current);
-    multiTileDragPreview.current?.remove();
+    tileDragPreview.current?.remove();
   }, []);
 
   useEffect(() => {
     if (!game) return;
-    const boardTileIds = new Set(game.board.flatMap((meld) => meld.tileIds));
+    const boardTileIds = new Set(game.board.flatMap((set) => set.tileIds));
     const rackTileIds = new Set(game.myRack);
     const turnActions = game.history.filter((item) =>
       item.playerId !== null
@@ -624,7 +695,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     observedBoardTileIds.current = boardTileIds;
     observedRackTileIds.current = rackTileIds;
 
-    const newBoardTileIds = latestAction?.kind === "played" && latestAction.playerId !== game.myPlayerId
+    const newBoardTileIds = latestAction?.kind === "played"
       ? [...boardTileIds].filter((tileId) => !previousBoardTileIds.has(tileId))
       : [];
     const newRackTileIds = latestAction?.kind === "drew" && latestAction.playerId === game.myPlayerId
@@ -707,9 +778,9 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   useEffect(() => {
     if (!game) return;
-    const normalizedBoard = (source: Meld[]) => source.map((meld) => ({
-      ...meld,
-      tileIds: normalizeMeldTileIds(meld.tileIds, game.tiles),
+    const normalizedBoard = (source: GameSet[]) => source.map((set) => ({
+      ...set,
+      tileIds: normalizeSetTileIds(set.tileIds, game.tiles),
     }));
     const baseBoard = normalizedBoard(game.board);
     const visibleBoard = game.currentPlayerId === game.myPlayerId
@@ -717,8 +788,8 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       : game.turnDraft;
     const layoutKey = rackLayoutPreferenceKey(game.id, game.myPlayerId);
     const storedLayout = parseRackLayout(localStorage.getItem(layoutKey));
-    const layoutForBoard = (board: Meld[]): RackLayout => {
-      const draftedTileIds = new Set(board.flatMap((meld) => meld.tileIds));
+    const layoutForBoard = (board: GameSet[]): RackLayout => {
+      const draftedTileIds = new Set(board.flatMap((set) => set.tileIds));
       const rackTileIds = game.myRack.filter((tileId) => !draftedTileIds.has(tileId));
       return rackAutoSort
         ? createRackLayout(sortTileIds(rackTileIds, game.tiles, rackSortMode))
@@ -745,8 +816,8 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setSelectedTileIds([]);
     setDraggedItem(null);
     setRackDropTarget(null);
-    setDropTargetMeldId(null);
-    doubleClickMeldId.current = null;
+    setDropTargetSetId(null);
+    doubleClickSetId.current = null;
     selectionAnchorId.current = null;
     setFocusedTileId(null);
     setKeyboardNavigationActive(false);
@@ -769,7 +840,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const isMyTurn = game?.status === "playing" && game.currentPlayerId === game.myPlayerId;
   const draftRack = useMemo(() => rackTileIds(draftRackLayout), [draftRackLayout]);
   const dirty = game ? boardKey(draftBoard) !== boardKey(game.board) : false;
-  const originalBoardTiles = useMemo(() => new Set(game?.board.flatMap((meld) => meld.tileIds) ?? []), [positionKey]);
+  const originalBoardTiles = useMemo(() => new Set(game?.board.flatMap((set) => set.tileIds) ?? []), [positionKey]);
   const originalRackTiles = useMemo(() => new Set(game?.myRack ?? []), [positionKey]);
   const selectionCanReturnToRack = selectedTileIds.length > 0
     && selectedTileIds.every((tileId) => originalRackTiles.has(tileId))
@@ -780,10 +851,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const redoShortcut = useMemo(() => isApplePlatform() ? `${shortcutModifier}⇧Z` : `${shortcutModifier}Y`, [shortcutModifier]);
   const optionModifier = useMemo(() => isApplePlatform() ? "⌥" : "Alt", []);
   const rackRows = useMemo(() => rackSlotRows(draftRackLayout), [draftRackLayout]);
-  const autosortedMeldTileIds = useMemo(() => new Set(
-    rackAutoSort && game?.enabledAssists.includes("rack-meld-highlights")
+  const autosortedSetTileIds = useMemo(() => new Set(
+    rackAutoSort && game?.enabledAssists.includes("rack-set-highlights")
       ? groupSortedRackTileIds(draftRack, game.tiles)
-          .filter((group) => group.isMeld)
+          .filter((group) => group.isSet)
           .flatMap((group) => group.tileIds)
       : [],
   ), [draftRack, game, rackAutoSort]);
@@ -804,9 +875,9 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     && boardKey(draftBoard) !== boardKey(game?.board ?? []);
   const opponentTurnValidation = useMemo(() => {
     if (!game || !currentPlayer || !hasLiveOpponentDraft) return null;
-    const tableTileIds = new Set(game.board.flatMap((meld) => meld.tileIds));
+    const tableTileIds = new Set(game.board.flatMap((set) => set.tileIds));
     const attemptedTileIds = draftBoard
-      .flatMap((meld) => meld.tileIds)
+      .flatMap((set) => set.tileIds)
       .filter((tileId) => !tableTileIds.has(tileId));
     return validateTurn({
       previousBoard: game.board,
@@ -822,13 +893,18 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   const openingPoints = useMemo(() => {
     if (!game || me?.opened) return 0;
-    return draftBoard.reduce((sum, meld) => {
-      if (!meld.tileIds.some((id) => originalRackTiles.has(id))) return sum;
-      if (meld.tileIds.some((id) => !originalRackTiles.has(id))) return sum;
-      const result = validateMeld(meld.tileIds, game.tiles);
+    return draftBoard.reduce((sum, set) => {
+      if (!set.tileIds.some((id) => originalRackTiles.has(id))) return sum;
+      if (set.tileIds.some((id) => !originalRackTiles.has(id))) return sum;
+      const result = validateSet(set.tileIds, game.tiles);
       return sum + (result.valid ? result.points : 0);
     }, 0);
   }, [draftBoard, game, me?.opened, originalRackTiles]);
+
+  const draftChangedSetIds = useMemo(
+    () => changedSetIds(draftBoard, game?.board ?? []),
+    [draftBoard, game?.board],
+  );
 
   const feltLayout = useMemo(() => {
     const previous = feltLayoutMemory.current;
@@ -838,15 +914,15 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       && previous.obstacleWidth === feltBounds.obstacleWidth
       && previous.obstacleHeight === feltBounds.obstacleHeight;
     const next = createFeltLayout(
-      draftBoard.map((meld, placementOrder) => ({
-        id: meld.id,
-        tileCount: meld.tileIds.length,
+      draftBoard.map((set, placementOrder) => ({
+        id: set.id,
+        tileCount: set.tileIds.length,
         placementOrder,
-        orderKey: meld.tileIds.map((tileId) => {
+        orderKey: set.tileIds.map((tileId) => {
           const tile = game?.tiles[tileId];
           if (!tile) return `missing:${tileId}`;
-          return tile.wildcard
-            ? "wildcard"
+          return tile.wilcard
+            ? "wilcard"
             : `${tile.color ?? ""}:${String(tile.value ?? 0).padStart(2, "0")}`;
         }).join("|"),
       })),
@@ -875,12 +951,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   function tileName(tileId: string): string {
     const tile = game?.tiles[tileId];
     if (!tile) return "Tile";
-    return tile.wildcard ? "Wildcard" : `${tile.color} ${tile.value}`;
+    return tile.wilcard ? "Wilcard" : `${tile.color} ${tile.value}`;
   }
 
-  function feltMeldNumber(meldId: string): number {
-    const canonicalIndex = feltLayout.placements.findIndex((placement) => placement.id === meldId);
-    return canonicalIndex >= 0 ? canonicalIndex + 1 : draftBoard.findIndex((meld) => meld.id === meldId) + 1;
+  function feltSetNumber(setId: string): number {
+    const canonicalIndex = feltLayout.placements.findIndex((placement) => placement.id === setId);
+    return canonicalIndex >= 0 ? canonicalIndex + 1 : draftBoard.findIndex((set) => set.id === setId) + 1;
   }
 
   function focusTileNavigation(
@@ -908,15 +984,15 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function handleTileFocus(tileId: string) {
     setFocusedTileId(tileId);
-    setFocusedMeldId(null);
+    setFocusedSetId(null);
     setKeyboardNavigationActive(true);
   }
 
-  function handleMeldFocus(meldId: string) {
+  function handleSetFocus(setId: string) {
     setFocusedTileId(null);
-    setFocusedMeldId(meldId);
+    setFocusedSetId(setId);
     setKeyboardNavigationActive(true);
-    setInteractionAnnouncement(`Meld ${feltMeldNumber(meldId)} focused. Press Space to select the whole meld.`);
+    setInteractionAnnouncement(`Set ${feltSetNumber(setId)} focused. Press Space to select the whole set.`);
   }
 
   function announceSelection(tileIds: string[], changedTileId?: string) {
@@ -940,7 +1016,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function tileSequence(tileId: string): string[] {
     if (draftRack.includes(tileId)) return draftRack;
-    return draftBoard.find((meld) => meld.tileIds.includes(tileId))?.tileIds ?? [];
+    return draftBoard.find((set) => set.tileIds.includes(tileId))?.tileIds ?? [];
   }
 
   function selectTileRange(tileId: string) {
@@ -972,12 +1048,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setSelectedTileIds([]);
     setDraggedItem(null);
     setRackDropTarget(null);
-    setDropTargetMeldId(null);
+    setDropTargetSetId(null);
     selectionAnchorId.current = null;
     setError("");
   }
 
-  function syncTurnDraft(board: Meld[]) {
+  function syncTurnDraft(board: GameSet[]) {
     if (!game || !isMyTurn || game.turnStartedAt === null) return;
     const sequence = Math.max(Date.now(), draftSequence.current + 1);
     draftSequence.current = sequence;
@@ -992,7 +1068,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     });
   }
 
-  function recordDraft(board: Meld[], rackLayout: RackLayout) {
+  function recordDraft(board: GameSet[], rackLayout: RackLayout) {
     const nextDraft = { board, rackLayout };
     if (draftKey(nextDraft) === draftKey({ board: draftBoard, rackLayout: draftRackLayout })) {
       clearTurnInteraction();
@@ -1092,32 +1168,32 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (!isMyTurn) return;
 
     if (target.type === "rack" && movingTileIds.some((tileId) => originalBoardTiles.has(tileId))) {
-      setError("A table tile cannot return to your rack. Move it into another meld.");
+      setError("A table tile cannot return to your rack. Move it into another set.");
       return;
     }
 
-    const sourceMeldIds = new Set(
+    const sourceSetIds = new Set(
       draftBoard
-        .filter((meld) => meld.tileIds.some((tileId) => movingTiles.has(tileId)))
-        .map((meld) => meld.id),
+        .filter((set) => set.tileIds.some((tileId) => movingTiles.has(tileId)))
+        .map((set) => set.id),
     );
-    if (target.type === "meld" && sourceMeldIds.size === 1 && sourceMeldIds.has(target.meldId)) {
+    if (target.type === "set" && sourceSetIds.size === 1 && sourceSetIds.has(target.setId)) {
       setSelectedTileIds([]);
       setDraggedItem(null);
-      setDropTargetMeldId(null);
+      setDropTargetSetId(null);
       return;
     }
 
     let nextRackLayout = removeRackTiles(draftRackLayout, movingTiles);
     let nextBoard = draftBoard
-      .map((meld) => ({
-        ...meld,
-        tileIds: normalizeMeldTileIds(
-          meld.tileIds.filter((id) => !movingTiles.has(id)),
+      .map((set) => ({
+        ...set,
+        tileIds: normalizeSetTileIds(
+          set.tileIds.filter((id) => !movingTiles.has(id)),
           game.tiles,
         ),
       }))
-      .filter((meld) => meld.tileIds.length > 0);
+      .filter((set) => set.tileIds.length > 0);
 
     if (target.type === "rack") {
       if (movingTileIds.every((tileId) => originalRackTiles.has(tileId))) {
@@ -1136,47 +1212,47 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       }
     } else if (target.type === "new") {
       nextBoard.push({
-        id: target.meldId ?? `draft-${crypto.randomUUID()}`,
-        tileIds: normalizeMeldTileIds(movingTileIds, game.tiles),
+        id: target.setId ?? `draft-${crypto.randomUUID()}`,
+        tileIds: normalizeSetTileIds(movingTileIds, game.tiles),
       });
     } else {
-      const targetIndex = nextBoard.findIndex((meld) => meld.id === target.meldId);
+      const targetIndex = nextBoard.findIndex((set) => set.id === target.setId);
       if (targetIndex < 0) return;
-      const meld = nextBoard[targetIndex]!;
+      const set = nextBoard[targetIndex]!;
       nextBoard[targetIndex] = {
-        ...meld,
-        tileIds: normalizeMeldTileIds([...meld.tileIds, ...movingTileIds], game.tiles),
+        ...set,
+        tileIds: normalizeSetTileIds([...set.tileIds, ...movingTileIds], game.tiles),
       };
     }
 
     const destination = target.type === "rack"
       ? "your rack"
       : target.type === "new"
-        ? "a new meld"
-        : `meld ${feltMeldNumber(target.meldId)}`;
+        ? "a new set"
+        : `set ${feltSetNumber(target.setId)}`;
     setInteractionAnnouncement(`Moved ${movingTileIds.length} ${movingTileIds.length === 1 ? "tile" : "tiles"} to ${destination}.`);
     recordDraft(nextBoard, nextRackLayout);
   }
 
-  function mergeMelds(sourceMeldId: string, targetMeldId: string) {
-    if (!isMyTurn || !game || sourceMeldId === targetMeldId) {
+  function mergeSets(sourceSetId: string, targetSetId: string) {
+    if (!isMyTurn || !game || sourceSetId === targetSetId) {
       setDraggedItem(null);
-      setDropTargetMeldId(null);
+      setDropTargetSetId(null);
       return;
     }
-    const source = draftBoard.find((meld) => meld.id === sourceMeldId);
-    const target = draftBoard.find((meld) => meld.id === targetMeldId);
+    const source = draftBoard.find((set) => set.id === sourceSetId);
+    const target = draftBoard.find((set) => set.id === targetSetId);
     if (!source || !target) return;
 
     const nextBoard = draftBoard
-      .filter((meld) => meld.id !== sourceMeldId)
-      .map((meld) => meld.id === targetMeldId
+      .filter((set) => set.id !== sourceSetId)
+      .map((set) => set.id === targetSetId
         ? {
-            ...meld,
-            tileIds: normalizeMeldTileIds([...meld.tileIds, ...source.tileIds], game.tiles),
+            ...set,
+            tileIds: normalizeSetTileIds([...set.tileIds, ...source.tileIds], game.tiles),
           }
-        : meld);
-    setInteractionAnnouncement("Combined the two melds.");
+        : set);
+    setInteractionAnnouncement("Combined the two sets.");
     recordDraft(nextBoard, draftRackLayout);
   }
 
@@ -1193,39 +1269,39 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     toggleTileSelection(tileId);
   }
 
-  function depositSelectedTilesIntoMeld(meldId: string) {
+  function depositSelectedTilesIntoSet(setId: string) {
     if (selectedTileIds.length === 0) return;
-    moveTiles(selectedTileIds, { type: "meld", meldId });
+    moveTiles(selectedTileIds, { type: "set", setId });
   }
 
-  function selectWholeMeld(meld: Meld) {
-    selectionAnchorId.current = meld.tileIds[0] ?? null;
-    setSelectedTileIds(meld.tileIds);
+  function selectWholeSet(set: GameSet) {
+    selectionAnchorId.current = set.tileIds[0] ?? null;
+    setSelectedTileIds(set.tileIds);
     setDraggedItem(null);
-    setInteractionAnnouncement(`Meld ${feltMeldNumber(meld.id)} selected. ${meld.tileIds.length} tiles picked up.`);
+    setInteractionAnnouncement(`Set ${feltSetNumber(set.id)} selected. ${set.tileIds.length} tiles picked up.`);
   }
 
-  function handleMeldKeyDown(
+  function handleSetKeyDown(
     event: ReactKeyboardEvent<HTMLDivElement>,
-    meld: Meld,
+    set: GameSet,
   ) {
     if (!isMyTurn) return;
-    const isMeldSurfaceTarget = event.target === event.currentTarget
-      || (event.target instanceof HTMLElement && event.target.classList.contains("meld-drag-handle"));
-    if (!isMeldSurfaceTarget) return;
+    const isSetSurfaceTarget = event.target === event.currentTarget
+      || (event.target instanceof HTMLElement && event.target.classList.contains("set-drag-handle"));
+    if (!isSetSurfaceTarget) return;
     setKeyboardNavigationActive(true);
-    setFocusedMeldId(meld.id);
+    setFocusedSetId(set.id);
 
     if (!event.metaKey && !event.ctrlKey && (event.key === " " || event.key === "Spacebar")) {
       event.preventDefault();
-      selectWholeMeld(meld);
+      selectWholeSet(set);
       return;
     }
 
     if (!event.shiftKey && !event.metaKey && !event.ctrlKey && event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      depositSelectedTilesIntoMeld(meld.id);
+      depositSelectedTilesIntoSet(set.id);
       return;
     }
 
@@ -1234,17 +1310,16 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       event.preventDefault();
       const key = event.key as typeof navigationKeys[number];
       const horizontal = key === "ArrowLeft" || key === "ArrowRight";
-      const moveBetweenMelds = !horizontal || event.shiftKey;
-      if (moveBetweenMelds) {
-        const nextMeld = directionalMeld(event.currentTarget, key)
+      const moveBetweenSets = !horizontal || event.shiftKey;
+      if (moveBetweenSets) {
+        const nextSet = directionalSet(event.currentTarget, key)
           ?? (!horizontal ? verticalWrapTarget(event.currentTarget, key) : null);
-        if (nextMeld) nextMeld.focus();
+        if (nextSet) nextSet.focus();
         return;
       }
 
-      const meldTiles = tileButtons(event.currentTarget);
-      const nextTile = key === "ArrowLeft" ? meldTiles.at(-1) : meldTiles[0];
-      if (nextTile) nextTile.focus();
+      const next = horizontalSetSequenceTarget(event.currentTarget, key);
+      if (next) next.focus();
     }
   }
 
@@ -1259,7 +1334,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (event.altKey && !event.metaKey && !event.ctrlKey && event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      if (selectedTileIds.length > 0) moveTiles(selectedTileIds, { type: "new" });
+      moveTiles(
+        selectedTileIds.length > 0 ? selectedTileIds : [tileId],
+        { type: "new" },
+      );
       return;
     }
 
@@ -1281,8 +1359,8 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (!event.shiftKey && !event.metaKey && !event.ctrlKey && event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      const meld = draftBoard.find((candidate) => candidate.tileIds.includes(tileId));
-      if (meld) depositSelectedTilesIntoMeld(meld.id);
+      const set = draftBoard.find((candidate) => candidate.tileIds.includes(tileId));
+      if (set) depositSelectedTilesIntoSet(set.id);
       return;
     }
 
@@ -1308,28 +1386,18 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (navigationKeys.includes(event.key as typeof navigationKeys[number])) {
       event.preventDefault();
       const key = event.key as typeof navigationKeys[number];
-      const inMeld = Boolean(event.currentTarget.closest(".meld-tiles"));
+      const inSet = Boolean(event.currentTarget.closest(".set-tiles"));
       const horizontal = key === "ArrowLeft" || key === "ArrowRight";
-      const currentMeld = event.currentTarget.closest<HTMLElement>(".meld");
-      if (inMeld && currentMeld && horizontal && !event.shiftKey) {
-        const meldTiles = tileButtons(currentMeld);
-        if (key === "ArrowLeft" && meldTiles[0] === event.currentTarget) {
-          currentMeld.focus();
-          return;
-        }
-      }
 
       let next = directionalTile(event.currentTarget, key, event.shiftKey);
       if (!next) {
-        next = inMeld && currentMeld && horizontal && !event.shiftKey
-          ? firstMeldInRow(currentMeld, key)
-          : key === "ArrowUp" || key === "ArrowDown"
-            ? verticalWrapTarget(event.currentTarget, key)
-            : null;
+        next = key === "ArrowUp" || key === "ArrowDown"
+          ? verticalWrapTarget(event.currentTarget, key)
+          : null;
       }
       if (!next) return;
       const nextTileId = next.dataset.tileId;
-      if (event.shiftKey && nextTileId && !(inMeld && horizontal)) extendSelectionTo(tileId, nextTileId);
+      if (event.shiftKey && nextTileId && !(inSet && horizontal)) extendSelectionTo(tileId, nextTileId);
       next.focus();
       return;
     }
@@ -1338,7 +1406,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       event.preventDefault();
       const root = event.metaKey || event.ctrlKey
         ? event.currentTarget.closest(".game-shell")
-        : event.currentTarget.closest(".meld-tiles, .rack-level");
+        : event.currentTarget.closest(".set-tiles, .rack-level");
       if (!root) return;
       const candidates = tileButtons(root);
       const next = event.key === "Home" ? candidates[0] : candidates.at(-1);
@@ -1349,37 +1417,37 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     }
   }
 
-  function pickUpOrMergeMeld(meldId: string) {
+  function pickUpOrMergeSet(setId: string) {
     if (!isMyTurn) return;
-    if (draggedItem?.type === "meld") {
-      if (draggedItem.meldId === meldId) {
+    if (draggedItem?.type === "set") {
+      if (draggedItem.setId === setId) {
         setDraggedItem(null);
-        setInteractionAnnouncement("Meld move canceled.");
+        setInteractionAnnouncement("Set move canceled.");
       } else {
-        mergeMelds(draggedItem.meldId, meldId);
+        mergeSets(draggedItem.setId, setId);
       }
       return;
     }
     setSelectedTileIds([]);
     selectionAnchorId.current = null;
-    setDraggedItem({ type: "meld", meldId });
-    const meldNumber = feltMeldNumber(meldId);
-    setInteractionAnnouncement(`Picked up meld ${meldNumber}. Choose another meld's move button to combine them, or press Escape to cancel.`);
+    setDraggedItem({ type: "set", setId });
+    const setNumber = feltSetNumber(setId);
+    setInteractionAnnouncement(`Picked up set ${setNumber}. Choose another set's move button to combine them, or press Escape to cancel.`);
   }
 
   function handleRackTileDoubleClick(tileId: string) {
     if (!isMyTurn || !game) return;
     cancelRackHold();
 
-    const activeMeldId = doubleClickMeldId.current;
-    if (activeMeldId && draftBoard.some((meld) => meld.id === activeMeldId)) {
-      moveTiles([tileId], { type: "meld", meldId: activeMeldId });
+    const activeSetId = doubleClickSetId.current;
+    if (activeSetId && draftBoard.some((set) => set.id === activeSetId)) {
+      moveTiles([tileId], { type: "set", setId: activeSetId });
       return;
     }
 
-    const meldId = `draft-${crypto.randomUUID()}`;
-    doubleClickMeldId.current = meldId;
-    moveTiles([tileId], { type: "new", meldId });
+    const setId = `draft-${crypto.randomUUID()}`;
+    doubleClickSetId.current = setId;
+    moveTiles([tileId], { type: "new", setId });
   }
 
   function dragTileStart(event: DragEvent<HTMLButtonElement>, tileId: string) {
@@ -1393,26 +1461,63 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     event.dataTransfer.setData(DRAG_ITEM_TYPE, JSON.stringify(item));
     event.dataTransfer.setData("text/tile-id", tileId);
     event.dataTransfer.setData("text/tile-ids", JSON.stringify(tileIds));
-    multiTileDragPreview.current?.remove();
-    multiTileDragPreview.current = null;
-    if (tileIds.length > 1 && typeof event.dataTransfer.setDragImage === "function") {
-      const preview = document.createElement("span");
-      preview.className = "tile-drag-preview";
-      const backTile = document.createElement("span");
-      backTile.className = "tile-drag-preview-tile tile-drag-preview-tile-back";
-      const frontTile = document.createElement("span");
-      frontTile.className = "tile-drag-preview-tile tile-drag-preview-tile-front";
-      preview.append(backTile, frontTile);
+    tileDragPreview.current?.remove();
+    tileDragPreview.current = null;
+    if (typeof event.dataTransfer.setDragImage === "function") {
       const tileStyle = getComputedStyle(event.currentTarget);
-      for (const property of ["--tile-face", "--tile-edge", "--tile-border-width", "--tile-radius", "--tile-sheen"]) {
-        preview.style.setProperty(property, tileStyle.getPropertyValue(property));
+      let preview: HTMLElement;
+      let offsetX: number;
+      let offsetY: number;
+
+      if (tileIds.length > 1) {
+        preview = createMultiTileDragPreview(tileStyle);
+        offsetX = 29;
+        offsetY = 38;
+      } else {
+        // Felt tiles are inside a scaled set. Cloning the tile into the body
+        // gives the browser an untransformed drag image, just like the rack.
+        const tilePreview = event.currentTarget.cloneNode(true) as HTMLButtonElement;
+        tilePreview.classList.remove("is-selected", "is-new-activity");
+        tilePreview.setAttribute("aria-hidden", "true");
+        tilePreview.tabIndex = -1;
+        tilePreview.style.position = "fixed";
+        tilePreview.style.top = "-1000px";
+        tilePreview.style.left = "-1000px";
+        tilePreview.style.margin = "0";
+        tilePreview.style.transform = "none";
+        tilePreview.style.width = tileStyle.width;
+        tilePreview.style.height = tileStyle.height;
+        for (let index = 0; index < tileStyle.length; index += 1) {
+          const property = tileStyle[index];
+          if (property?.startsWith("--tile-")) {
+            tilePreview.style.setProperty(property, tileStyle.getPropertyValue(property));
+          }
+        }
+        preview = tilePreview;
+        offsetX = Number.parseFloat(tileStyle.width) / 2;
+        offsetY = Number.parseFloat(tileStyle.height) / 2;
       }
+
       document.body.append(preview);
-      event.dataTransfer.setDragImage(preview, 29, 38);
-      multiTileDragPreview.current = preview;
+      event.dataTransfer.setDragImage(preview, offsetX, offsetY);
+      tileDragPreview.current = preview;
     }
     setSelectedTileIds(tileIds);
     setDraggedItem(item);
+  }
+
+  function createMultiTileDragPreview(tileStyle: CSSStyleDeclaration): HTMLElement {
+    const preview = document.createElement("span");
+    preview.className = "tile-drag-preview";
+    const backTile = document.createElement("span");
+    backTile.className = "tile-drag-preview-tile tile-drag-preview-tile-back";
+    const frontTile = document.createElement("span");
+    frontTile.className = "tile-drag-preview-tile tile-drag-preview-tile-front";
+    preview.append(backTile, frontTile);
+    for (const property of ["--tile-face", "--tile-edge", "--tile-border-width", "--tile-radius", "--tile-sheen"]) {
+      preview.style.setProperty(property, tileStyle.getPropertyValue(property));
+    }
+    return preview;
   }
 
   function beginRackHold(event: ReactPointerEvent<HTMLButtonElement>, tileId: string) {
@@ -1461,12 +1566,20 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     }
   }
 
-  function dragMeldStart(event: DragEvent<HTMLDivElement>, meldId: string) {
+  function dragSetStart(event: DragEvent<HTMLDivElement>, setId: string) {
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData(DRAG_ITEM_TYPE, JSON.stringify({ type: "meld", meldId }));
-    event.dataTransfer.setData("text/meld-id", meldId);
+    event.dataTransfer.setData(DRAG_ITEM_TYPE, JSON.stringify({ type: "set", setId }));
+    event.dataTransfer.setData("text/set-id", setId);
+    tileDragPreview.current?.remove();
+    tileDragPreview.current = null;
+    if (typeof event.dataTransfer.setDragImage === "function") {
+      const preview = createMultiTileDragPreview(getComputedStyle(event.currentTarget));
+      document.body.append(preview);
+      event.dataTransfer.setDragImage(preview, 29, 38);
+      tileDragPreview.current = preview;
+    }
     setSelectedTileIds([]);
-    setDraggedItem({ type: "meld", meldId });
+    setDraggedItem({ type: "set", setId });
   }
 
   function readDragItem(event: DragEvent<HTMLElement>): DragItem | null {
@@ -1475,13 +1588,13 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       try {
         const item = JSON.parse(encoded) as DragItem;
         if (item.type === "tiles" && Array.isArray(item.tileIds) && item.tileIds.every((id) => typeof id === "string")) return item;
-        if (item.type === "meld" && item.meldId) return item;
+        if (item.type === "set" && item.setId) return item;
       } catch {
         // Fall through to the broadly supported plain-text transfer types.
       }
     }
-    const meldId = event.dataTransfer.getData("text/meld-id");
-    if (meldId) return { type: "meld", meldId };
+    const setId = event.dataTransfer.getData("text/set-id");
+    if (setId) return { type: "set", setId };
     const encodedTileIds = event.dataTransfer.getData("text/tile-ids");
     if (encodedTileIds) {
       try {
@@ -1546,25 +1659,25 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           }
         : target;
       moveTiles(item.tileIds, rackTarget);
-    } else if (target.type === "meld") {
-      mergeMelds(item.meldId, target.meldId);
+    } else if (target.type === "set") {
+      mergeSets(item.setId, target.setId);
     } else if (target.type === "rack") {
-      setError("A whole meld cannot move to your rack. Drag an eligible rack tile instead.");
+      setError("A whole set cannot move to your rack. Drag an eligible rack tile instead.");
       setDraggedItem(null);
       setRackDropTarget(null);
-      setDropTargetMeldId(null);
+      setDropTargetSetId(null);
     } else {
       setDraggedItem(null);
-      setDropTargetMeldId(null);
+      setDropTargetSetId(null);
     }
   }
 
   function finishDrag() {
-    multiTileDragPreview.current?.remove();
-    multiTileDragPreview.current = null;
+    tileDragPreview.current?.remove();
+    tileDragPreview.current = null;
     setDraggedItem(null);
     setRackDropTarget(null);
-    setDropTargetMeldId(null);
+    setDropTargetSetId(null);
   }
 
   function resetDraft() {
@@ -1595,6 +1708,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     setError("");
     try {
       await takeAction(session, action);
+      clearTurnInteraction();
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That action did not work.");
@@ -1697,8 +1811,9 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function drawAndEnd() {
     if (!isMyTurn || busy) return;
-    if (dirty && !window.confirm("Discard your table changes and draw a tile?")) return;
-    setInteractionAnnouncement("Drawing a tile and ending your turn.");
+    const poolEmpty = game.poolCount === 0;
+    if (dirty && !window.confirm(`Discard your table changes and ${poolEmpty ? "pass" : "draw a tile"}?`)) return;
+    setInteractionAnnouncement(poolEmpty ? "Passing because the pool is empty." : "Drawing a tile and ending your turn.");
     void runAction({ type: "draw" });
   }
 
@@ -1715,6 +1830,20 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   function handleTurnShortcut(event: ReactKeyboardEvent<HTMLElement>) {
     if (event.defaultPrevented || event.repeat || isShortcutTypingTarget(event.target, event)) return;
 
+    if (event.altKey && !event.metaKey && !event.ctrlKey && event.key === "Enter" && isMyTurn && !busy) {
+      const tileId = tileIdFromEventTarget(event.target);
+      const tileIds = selectedTileIds.length > 0
+        ? selectedTileIds
+        : tileId
+          ? [tileId]
+          : [];
+      if (tileIds.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      moveTiles(tileIds, { type: "new" });
+      return;
+    }
+
     const primaryModifier = event.metaKey || event.ctrlKey;
     if (!primaryModifier || event.altKey || !isMyTurn || busy) return;
 
@@ -1728,6 +1857,19 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function handleGameShortcut(event: KeyboardEvent) {
     if (event.defaultPrevented || event.repeat || isShortcutTypingTarget(event.target, event)) return;
+
+    if (event.altKey && !event.metaKey && !event.ctrlKey && event.key === "Enter" && isMyTurn && !busy) {
+      const tileId = tileIdFromEventTarget(event.target);
+      const tileIds = selectedTileIds.length > 0
+        ? selectedTileIds
+        : tileId
+          ? [tileId]
+          : [];
+      if (tileIds.length === 0) return;
+      event.preventDefault();
+      moveTiles(tileIds, { type: "new" });
+      return;
+    }
 
     const navigationKeys = ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"] as const;
     const isTileTarget = event.target instanceof HTMLElement && Boolean(event.target.closest(ENABLED_TILE_SELECTOR));
@@ -1841,7 +1983,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
             <div className="lobby-assists-heading"><SlidersHorizontal /><span><strong>Your assists</strong><small>Each player chooses from the modes allowed by the host.</small></span></div>
             <AssistControls game={game} busy={busy} onToggle={(assistId, enabled) => void changeAssist(assistId, enabled)} />
           </section>
-          <div className="lobby-meta"><span><Clock3 size={17} /> {game.mode === "realtime" ? "2-minute turns" : "72-hour turns"}</span><span><Users size={17} /> {game.players.length} of {game.maxPlayers}</span></div>
+          <div className="lobby-meta"><span><Clock3 size={17} /> {game.mode === "realtime" ? "1-minute turns" : "72-hour turns"}</span><span><Users size={17} /> {game.players.length} of {game.maxPlayers}</span></div>
           {error && <p className="form-error" role="alert">{error}</p>}
           {isHost ? (
             <button className="primary-button lobby-start" type="button" disabled={busy || game.players.length < 2} onClick={beginGame}>{busy ? "Shuffling…" : game.players.length < 2 ? "Waiting for one more player" : "Shuffle & start"}</button>
@@ -1868,12 +2010,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     if (item.playerId !== null && TURN_EVENT_KINDS.has(item.kind)) lastTurnByPlayer.set(item.playerId, item);
   }
   const newActivityTiles = new Set(newActivityTileIds);
-  const newActivityMelds = new Set(
+  const newActivitySets = new Set(
     draftBoard
-      .filter((meld) => meld.tileIds.some((tileId) => newActivityTiles.has(tileId)))
-      .map((meld) => meld.id),
+      .filter((set) => set.tileIds.some((tileId) => newActivityTiles.has(tileId)))
+      .map((set) => set.id),
   );
-  const meldsById = new Map(draftBoard.map((meld) => [meld.id, meld]));
+  const setsById = new Map(draftBoard.map((set) => [set.id, set]));
 
   return (
     <main
@@ -1955,13 +2097,6 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         })}
         <div className="players-topline-actions">
           <div className={`turn-clock ${isMyTurn ? "is-mine" : ""}`}><Clock3 /><span><small>{isMyTurn ? "Your turn" : `${currentPlayer?.name ?? "—"}'s turn`}</small><strong>{timeLabel(game.turnDeadline, now)}</strong></span></div>
-          <div
-            className={`top-turn-actions ${!isMyTurn || game.status !== "playing" ? "layout-placeholder" : ""}`}
-            aria-hidden={!isMyTurn || game.status !== "playing"}
-          >
-            <button className="secondary-button" type="button" disabled={!isMyTurn || busy} onClick={drawAndEnd} aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"><ArrowDownToLine /> <span>Draw & end</span><kbd aria-hidden="true">{shortcutModifier}⇧↵</kbd></button>
-            <button className="primary-button" type="button" disabled={!isMyTurn || !canCommit || busy} onClick={commitTurn} aria-keyshortcuts="Control+Enter Meta+Enter"><Check /> <span>Commit turn</span><kbd aria-hidden="true">{shortcutModifier}↵</kbd></button>
-          </div>
         </div>
       </section>
 
@@ -1981,106 +2116,110 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
             className="pool-count"
             ref={poolRef}
             type="button"
-            disabled={!isMyTurn || busy || game.poolCount === 0}
-            aria-label={`Draw one tile and end turn. ${game.poolCount} tiles remain in the pool.`}
-            title={isMyTurn ? "Draw one tile and end your turn" : `${currentPlayer?.name ?? "Another player"} is drawing`}
+            disabled={!isMyTurn || busy}
+            aria-label={game.poolCount === 0
+              ? `Pass because the pool is empty and end your turn.`
+              : `Draw one tile and end turn. ${game.poolCount} tiles remain in the pool.`}
+            title={isMyTurn
+              ? game.poolCount === 0 ? "Pass because the pool is empty" : "Draw one tile and end your turn"
+              : `${currentPlayer?.name ?? "Another player"} is drawing`}
             onClick={(event) => {
               event.stopPropagation();
               drawAndEnd();
             }}
-          ><span className="tile-stack-icon" aria-hidden="true" /><span><small>Draw pile</small><strong>{game.poolCount}</strong></span></button>
+          ><span className="tile-stack-icon" aria-hidden="true" /><span><small>{game.poolCount === 0 ? "Empty pool" : "Draw pile"}</small><strong>{game.poolCount}</strong></span></button>
 
-          <div className="melds" ref={feltRef}>
+          <div className="sets" ref={feltRef}>
             {feltLayout.placements.length > 0 && (
               <div
-                className="meld-grid"
+                className="set-grid"
                 data-felt-rows={feltLayout.rowCount}
                 data-felt-scale={feltLayout.scale.toFixed(2)}
               >
                 {feltLayout.placements.map((placement) => {
-                  const meld = meldsById.get(placement.id);
-                  if (!meld) return null;
-                  const meldIndex = placement.order;
-                  const validation = validateMeld(meld.tileIds, game.tiles);
-                  const wildcardAssignments = resolveWildcardAssignments(meld.tileIds, game.tiles);
+                  const set = setsById.get(placement.id);
+                  if (!set) return null;
+                  const setIndex = placement.order;
+                  const validation = validateSet(set.tileIds, game.tiles);
+                  const wilcardAssignments = resolveWilcardAssignments(set.tileIds, game.tiles);
                   return (
                     <div
-                      className={`meld ${validation.valid ? "is-valid" : "is-invalid"} ${focusedMeldId === meld.id ? "is-keyboard-focused" : ""} ${newActivityMelds.has(meld.id) ? "is-new-activity" : ""} ${draggedItem?.type === "meld" && draggedItem.meldId === meld.id ? "is-dragging" : ""} ${dropTargetMeldId === meld.id ? "is-drop-target" : ""}`}
-                      key={meld.id}
-                      data-meld-id={meld.id}
+                      className={`set ${validation.valid ? "is-valid" : "is-invalid"} ${draftChangedSetIds.has(set.id) ? "is-changed" : ""} ${focusedSetId === set.id ? "is-keyboard-focused" : ""} ${newActivitySets.has(set.id) ? "is-new-activity" : ""} ${draggedItem?.type === "set" && draggedItem.setId === set.id ? "is-dragging" : ""} ${dropTargetSetId === set.id ? "is-drop-target" : ""}`}
+                      key={set.id}
+                      data-set-id={set.id}
                       data-felt-row={placement.row + 1}
                       style={{
                         "--felt-x": `${placement.x}px`,
                         "--felt-y": `${placement.y}px`,
                         "--felt-scale": feltLayout.scale,
-                        "--felt-meld-width": `${placement.width / feltLayout.scale}px`,
+                        "--felt-set-width": `${placement.width / feltLayout.scale}px`,
                       } as CSSProperties}
                       tabIndex={isMyTurn ? 0 : undefined}
                       role="group"
                       onFocus={(event) => {
-                        if (event.target === event.currentTarget) handleMeldFocus(meld.id);
+                        if (event.target === event.currentTarget) handleSetFocus(set.id);
                       }}
-                      onKeyDown={(event) => handleMeldKeyDown(event, meld)}
+                      onKeyDown={(event) => handleSetKeyDown(event, set)}
                       draggable={isMyTurn}
-                      aria-label={`Meld ${meldIndex + 1}, ${validation.valid ? validation.kind : "unfinished"}.${selectedTileIds.length > 0 ? ` Click to add ${selectedTileIds.length === 1 ? "the selected tile" : `${selectedTileIds.length} selected tiles`}.` : " Drag to merge with another meld."}`}
+                      aria-label={`Set ${setIndex + 1}, ${validation.valid ? validation.kind : "unfinished"}.${selectedTileIds.length > 0 ? ` Click to add ${selectedTileIds.length === 1 ? "the selected tile" : `${selectedTileIds.length} selected tiles`}.` : " Drag to merge with another set."}`}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (draggedItem?.type === "meld" && draggedItem.meldId !== meld.id) {
-                          mergeMelds(draggedItem.meldId, meld.id);
+                        if (draggedItem?.type === "set" && draggedItem.setId !== set.id) {
+                          mergeSets(draggedItem.setId, set.id);
                           return;
                         }
                         if (selectedTileIds.length > 0 && !(event.target as HTMLElement).closest(".tile")) {
-                          moveTiles(selectedTileIds, { type: "meld", meldId: meld.id });
+                          moveTiles(selectedTileIds, { type: "set", setId: set.id });
                         }
                       }}
-                      onDragStart={(event) => dragMeldStart(event, meld.id)}
+                      onDragStart={(event) => dragSetStart(event, set.id)}
                       onDragEnd={finishDrag}
                       onDragOver={(event) => {
                         if (!isMyTurn) return;
                         event.preventDefault();
                         event.stopPropagation();
                         event.dataTransfer.dropEffect = "move";
-                        if (draggedItem?.type !== "meld" || draggedItem.meldId !== meld.id) {
-                          setDropTargetMeldId(meld.id);
+                        if (draggedItem?.type !== "set" || draggedItem.setId !== set.id) {
+                          setDropTargetSetId(set.id);
                         }
                       }}
                       onDrop={(event) => {
                         event.stopPropagation();
-                        drop(event, { type: "meld", meldId: meld.id });
+                        drop(event, { type: "set", setId: set.id });
                       }}
                     >
-                      <span className="meld-number">{String(meldIndex + 1).padStart(2, "0")}</span>
+                      <span className="set-number">{String(setIndex + 1).padStart(2, "0")}</span>
                       {isMyTurn && (
                         <button
-                          className="meld-drag-handle"
+                          className="set-drag-handle"
                           type="button"
-                          aria-pressed={draggedItem?.type === "meld" && draggedItem.meldId === meld.id}
-                          aria-label={draggedItem?.type === "meld" && draggedItem.meldId !== meld.id
-                            ? `Combine picked-up meld with meld ${meldIndex + 1}`
-                            : `${draggedItem?.type === "meld" ? "Put down" : "Pick up"} meld ${meldIndex + 1}`}
-                          title="Pick up this whole meld; choose another meld to combine"
+                          aria-pressed={draggedItem?.type === "set" && draggedItem.setId === set.id}
+                          aria-label={draggedItem?.type === "set" && draggedItem.setId !== set.id
+                            ? `Combine picked-up set with set ${setIndex + 1}`
+                            : `${draggedItem?.type === "set" ? "Put down" : "Pick up"} set ${setIndex + 1}`}
+                          title="Pick up this whole set; choose another set to combine"
                           onKeyDown={(event) => {
                             if (event.key !== "Enter") return;
                             event.preventDefault();
                             event.stopPropagation();
-                            depositSelectedTilesIntoMeld(meld.id);
+                            depositSelectedTilesIntoSet(set.id);
                           }}
                           onClick={(event) => {
                             event.stopPropagation();
-                            pickUpOrMergeMeld(meld.id);
+                            pickUpOrMergeSet(set.id);
                           }}
                         ><GripVertical /></button>
                       )}
-                      <div className="meld-tiles">
-                        {meld.tileIds.map((tileId) => {
+                      <div className="set-tiles">
+                        {set.tileIds.map((tileId) => {
                           const tile = game.tiles[tileId];
                           if (!tile) return null;
                           return (
                             <TileView
                               key={tileId}
                               tile={tile}
-                              wildcardAssignment={wildcardAssignments[tileId]}
-                              wildcardOnTable
+                              wilcardAssignment={wilcardAssignments[tileId]}
+                              wilcardOnTable
                               selected={selectedTileIds.includes(tileId)}
                               newActivity={newActivityTiles.has(tileId)}
                               disabled={!isMyTurn}
@@ -2090,7 +2229,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                           onKeyDown={(event) => handleTileKeyDown(event, tileId)}
                               onDragStart={(event) => dragTileStart(event, tileId)}
                               onDragEnd={(event) => { event.stopPropagation(); finishDrag(); }}
-                              onDrop={(event) => { event.stopPropagation(); drop(event, { type: "meld", meldId: meld.id }); }}
+                              onDrop={(event) => { event.stopPropagation(); drop(event, { type: "set", setId: set.id }); }}
                             />
                           );
                         })}
@@ -2190,37 +2329,45 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       <section className={`rack-zone ${isMyTurn ? "is-active" : ""}`}>
         <div className="rack-heading">
           <div className="rack-tools">
-            <button
-              type="button"
-              className={rackAutoSort && rackSortMode === "color-first" ? "is-active" : ""}
-              aria-pressed={rackAutoSort && rackSortMode === "color-first"}
-              title="Sort by color, then number"
-              onClick={() => changeRackSort("color-first")}
-            >Color → 123</button>
-            <button
-              type="button"
-              className={rackAutoSort && rackSortMode === "number-first" ? "is-active" : ""}
-              aria-pressed={rackAutoSort && rackSortMode === "number-first"}
-              title="Sort by number, then color"
-              onClick={() => changeRackSort("number-first")}
-            >123 → Color</button>
+            <div className="rack-sort-tools" aria-label="Rack sorting">
+              <button
+                type="button"
+                className={rackAutoSort && rackSortMode === "color-first" ? "is-active" : ""}
+                aria-pressed={rackAutoSort && rackSortMode === "color-first"}
+                title="Sort by color, then number"
+                onClick={() => changeRackSort("color-first")}
+              >Color → 123</button>
+              <button
+                type="button"
+                className={rackAutoSort && rackSortMode === "number-first" ? "is-active" : ""}
+                aria-pressed={rackAutoSort && rackSortMode === "number-first"}
+                title="Sort by number, then color"
+                onClick={() => changeRackSort("number-first")}
+              >123 → Color</button>
+              {isMyTurn && (selectedTileIds.length > 0 || draggedItem?.type === "set") && (
+                <div className="selection-actions" aria-label="Selection actions">
+                  {selectedTileIds.length > 0 && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "new" })}>New set <kbd aria-hidden="true">{optionModifier}↵</kbd></button>}
+                  {selectionCanReturnToRack && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "rack" })}>Return to rack</button>}
+                  <button type="button" onClick={() => {
+                    clearTurnInteraction();
+                    setInteractionAnnouncement("Selection canceled.");
+                  }}>{draggedItem?.type === "set" ? "Cancel set move" : "Clear selection"} <kbd aria-hidden="true">Esc</kbd></button>
+                </div>
+              )}
+            </div>
             {isMyTurn && (
               <div className="rack-turn-tools" aria-label="Turn history">
                 <div className="turn-history-buttons">
                   <button type="button" disabled={busy || turnHistoryIndex === 0} onClick={() => showTurnHistory(turnHistoryIndex - 1)} title="Go back one move" aria-label="Back one move" aria-keyshortcuts="Control+Z Meta+Z"><Undo2 /> Back <kbd aria-hidden="true">{shortcutModifier}Z</kbd></button>
+                  <button className="table-reset-button" type="button" disabled={busy || turnHistoryIndex === 0} onClick={resetDraft} title="Restore the table and rack to the start of your turn" aria-label="Reset turn" aria-keyshortcuts="Control+Shift+Backspace Meta+Shift+Backspace"><RotateCcw /> Reset <kbd aria-hidden="true">{shortcutModifier}⇧⌫</kbd></button>
                   <button type="button" disabled={busy || turnHistoryIndex >= turnHistory.length - 1} onClick={() => showTurnHistory(turnHistoryIndex + 1)} title="Go forward one move" aria-label="Forward one move" aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z">Forward <kbd aria-hidden="true">{redoShortcut}</kbd> <Redo2 /></button>
                 </div>
-                <button className="table-reset-button" type="button" disabled={busy || turnHistoryIndex === 0} onClick={resetDraft} title="Restore the table and rack to the start of your turn" aria-keyshortcuts="Control+Shift+Backspace Meta+Shift+Backspace"><RotateCcw /> Reset turn <kbd aria-hidden="true">{shortcutModifier}⇧⌫</kbd></button>
               </div>
             )}
-            {isMyTurn && (selectedTileIds.length > 0 || draggedItem?.type === "meld") && (
-              <div className="selection-actions" aria-label="Selection actions">
-                {selectedTileIds.length > 0 && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "new" })}>New meld <kbd aria-hidden="true">{optionModifier}↵</kbd></button>}
-                {selectionCanReturnToRack && <button type="button" onClick={() => moveTiles(selectedTileIds, { type: "rack" })}>Return to rack</button>}
-                <button type="button" onClick={() => {
-                  clearTurnInteraction();
-                  setInteractionAnnouncement("Selection canceled.");
-                }}>{draggedItem?.type === "meld" ? "Cancel meld move" : "Clear selection"} <kbd aria-hidden="true">Esc</kbd></button>
+            {isMyTurn && (
+              <div className="rack-action-tools" aria-label="Turn actions">
+                <button className="secondary-button" type="button" disabled={busy} onClick={drawAndEnd} aria-label={game.poolCount === 0 ? "Pass & end" : "Draw & end"} aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"><ArrowDownToLine /> <span>{game.poolCount === 0 ? "Pass" : "Draw"}</span><kbd aria-hidden="true">{shortcutModifier}⇧↵</kbd></button>
+                <button className="primary-button" type="button" disabled={!canCommit || busy} onClick={commitTurn} aria-label="Commit turn" aria-keyshortcuts="Control+Enter Meta+Enter"><Check /> <span>Commit</span><kbd aria-hidden="true">{shortcutModifier}↵</kbd></button>
               </div>
             )}
           </div>
@@ -2229,7 +2376,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         <div
           className={`opening-meter ${openingPoints >= 30 ? "is-complete" : ""} ${me?.opened || !isMyTurn ? "layout-placeholder" : ""}`}
           aria-hidden={me?.opened || !isMyTurn}
-        ><span style={{ width: `${Math.min(100, (openingPoints / 30) * 100)}%` }} /><b>Opening meld: {openingPoints} / 30</b></div>
+        ><span style={{ width: `${Math.min(100, (openingPoints / 30) * 100)}%` }} /><b>Opening set: {openingPoints} / 30</b></div>
 
         <div
           className={`rack ${rackAutoSort ? "is-autosorted" : "is-manual"}`}
@@ -2275,10 +2422,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                 const tile = tileId ? game.tiles[tileId] : null;
                 return (
                 <div
-                  className={`rack-slot ${tile ? "is-occupied" : "is-empty"} ${tileId && autosortedMeldTileIds.has(tileId) ? "is-meld" : ""} ${rackDropTarget?.slotIndex === slotIndex && draggedItem?.type === "tiles" ? "is-drop-target" : ""}`}
+                  className={`rack-slot ${tile ? "is-occupied" : "is-empty"} ${tileId && autosortedSetTileIds.has(tileId) ? "is-set" : ""} ${rackDropTarget?.slotIndex === slotIndex && draggedItem?.type === "tiles" ? "is-drop-target" : ""}`}
                   data-rack-slot={slotIndex}
                   data-rack-drop-side={rackDropTarget?.slotIndex === slotIndex ? rackDropTarget.side : undefined}
-                  data-rack-meld={tileId && autosortedMeldTileIds.has(tileId) ? "true" : undefined}
+                  data-rack-set={tileId && autosortedSetTileIds.has(tileId) ? "true" : undefined}
                   role="gridcell"
                   aria-label={tile
                     ? `Rack row ${rowIndex + 1}, slot ${columnIndex + 1}, ${tileName(tile.id)}`

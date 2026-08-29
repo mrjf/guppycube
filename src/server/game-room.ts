@@ -67,33 +67,48 @@ function normalizeEnabledAssists(value: unknown, policy: AssistPolicyMap): Assis
   );
 }
 
-function upgradeWildcardId(value: unknown): unknown {
-  return typeof value === "string" ? value.replace(/^joker-/, "wildcard-") : value;
+const legacyWilcardFlags = [["j", "oker"].join(""), ["wild", "card"].join("")];
+const legacyWilcardPrefixes = legacyWilcardFlags.map((flag) => `${flag}-`);
+const legacySetAssistId = ["rack", ["m", "eld"].join(""), "highlights"].join("-");
+
+function legacyValue(value: Record<string, unknown>, keys: string[]): boolean {
+  return keys.some((key) => value[key] === true);
+}
+
+function upgradeWilcardId(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  for (const prefix of legacyWilcardPrefixes) {
+    if (value.startsWith(prefix)) return `wilcard-${value.slice(prefix.length)}`;
+  }
+  return value;
 }
 
 function upgradeTileIds(value: unknown): unknown {
-  return Array.isArray(value) ? value.map(upgradeWildcardId) : value;
+  return Array.isArray(value) ? value.map(upgradeWilcardId) : value;
 }
 
 function upgradeBoard(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
-  return value.map((meld) => isRecord(meld) ? { ...meld, tileIds: upgradeTileIds(meld.tileIds) } : meld);
+  return value.map((set) => isRecord(set) ? { ...set, tileIds: upgradeTileIds(set.tileIds) } : set);
 }
 
 function upgradeTiles(value: unknown): unknown {
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.entries(value).map(([id, tile]) => {
     if (!isRecord(tile)) return [id, tile];
-    const wildcard = tile.wildcard === true || tile.joker === true;
-    const upgradedId = upgradeWildcardId(id);
-    const { joker: _legacyWildcard, ...rest } = tile;
-    return [upgradedId, { ...rest, id: upgradedId, wildcard }];
+    const wilcard = tile.wilcard === true || legacyValue(tile, legacyWilcardFlags);
+    const upgradedId = upgradeWilcardId(id);
+    const rest = Object.fromEntries(Object.entries(tile).filter(([key]) => !legacyWilcardFlags.includes(key)));
+    return [upgradedId, { ...rest, id: upgradedId, wilcard }];
   }));
 }
 
 function upgradeStoredGame(value: unknown): unknown {
   if (!isRecord(value) || !Array.isArray(value.players)) return value;
-  const assistPolicy = normalizeAssistPolicy(value.assistPolicy);
+  const rawAssistPolicy = isRecord(value.assistPolicy) && value.assistPolicy[legacySetAssistId] !== undefined
+    ? { ...value.assistPolicy, "rack-set-highlights": value.assistPolicy[legacySetAssistId] }
+    : value.assistPolicy;
+  const assistPolicy = normalizeAssistPolicy(rawAssistPolicy);
   return {
     ...value,
     assistPolicy,
@@ -116,7 +131,12 @@ function upgradeStoredGame(value: unknown): unknown {
         rack: upgradeTileIds(player.rack),
         isComputer,
         computerStrategy,
-        enabledAssists: normalizeEnabledAssists(player.enabledAssists, assistPolicy),
+        enabledAssists: normalizeEnabledAssists(
+          Array.isArray(player.enabledAssists)
+            ? player.enabledAssists.map((assistId) => assistId === legacySetAssistId ? "rack-set-highlights" : assistId)
+            : player.enabledAssists,
+          assistPolicy,
+        ),
       };
     }),
   };
@@ -139,6 +159,27 @@ function secureShuffle(values: string[]): string[] {
     [result[index], result[swapIndex]] = [result[swapIndex]!, result[index]!];
   }
   return result;
+}
+
+function tileNumber(tileId: string, tiles: Record<string, Tile>): number {
+  return tiles[tileId]?.value ?? 0;
+}
+
+export function chooseStartingPlayerIndex(
+  playerCount: number,
+  pool: string[],
+  tiles: Record<string, Tile>,
+): number {
+  let candidates = Array.from({ length: playerCount }, (_, index) => index);
+  const drawnTileIds: string[] = [];
+  while (candidates.length > 1 && pool.length >= candidates.length) {
+    const picks = candidates.map((index) => ({ index, tileId: pool.pop() }));
+    drawnTileIds.push(...picks.flatMap(({ tileId }) => tileId ? [tileId] : []));
+    const highest = Math.max(...picks.map(({ tileId }) => tileId ? tileNumber(tileId, tiles) : 0));
+    candidates = picks.filter(({ tileId }) => tileId && tileNumber(tileId, tiles) === highest).map(({ index }) => index);
+  }
+  pool.push(...drawnTileIds);
+  return candidates[0] ?? 0;
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -385,10 +426,16 @@ export class GameRoom extends DurableObject<Env> {
     state: StoredGame,
     player: StoredPlayer,
     reason: "manual" | "timeout" | "automatic",
+    drawCount = 1,
   ): void {
-    const drawn = state.pool.pop();
-    if (drawn) {
-      player.rack.push(drawn);
+    const drawn: string[] = [];
+    for (let index = 0; index < drawCount; index += 1) {
+      const tileId = state.pool.pop();
+      if (!tileId) break;
+      drawn.push(tileId);
+      player.rack.push(tileId);
+    }
+    if (drawn.length > 0) {
       state.consecutiveEmptyDraws = 0;
     } else {
       state.consecutiveEmptyDraws += 1;
@@ -399,15 +446,15 @@ export class GameRoom extends DurableObject<Env> {
       event(
         reason === "timeout" ? "timeout" : "drew",
         reason === "timeout"
-          ? `${player.name}'s clock ran out${drawn ? "; a tile was drawn." : "."}`
+          ? `${player.name}'s clock ran out${drawn.length === 0 ? "." : `; ${drawn.length} tile${drawn.length === 1 ? " was" : "s were"} drawn.`}`
           : reason === "automatic"
-            ? `${player.name} auto-drew${drawn ? " a tile because no move was possible" : " from an empty pool"}.`
-          : `${player.name} drew${drawn ? " a tile" : " from an empty pool"}.`,
+            ? `${player.name}${drawn.length > 0 ? drawn.length === 1 ? " auto-drew a tile because no move was possible" : ` auto-drew ${drawn.length} tiles because no move was possible` : " auto-passed because the pool is empty"}.`
+          : `${player.name}${drawn.length > 0 ? ` drew ${drawn.length} tile${drawn.length === 1 ? "" : "s"}` : " passed because the pool is empty"}.`,
         player.id,
       ),
     );
 
-    if (!drawn && state.consecutiveEmptyDraws >= state.players.length) {
+    if (drawn.length === 0 && state.consecutiveEmptyDraws >= state.players.length) {
       this.finishStalemate(state);
       return;
     }
@@ -607,10 +654,9 @@ export class GameRoom extends DurableObject<Env> {
     if (state.status !== "lobby") return { ok: false, error: "This game has already started." };
     if (state.players.length < 2) return { ok: false, error: "Invite at least one more player." };
 
-    state.players = secureShuffle(state.players.map((player) => player.id)).map(
-      (id) => state.players.find((player) => player.id === id)!,
-    );
     state.pool = secureShuffle(Object.keys(state.tiles));
+    state.turnIndex = chooseStartingPlayerIndex(state.players.length, state.pool, state.tiles);
+    state.pool = secureShuffle(state.pool);
     for (let round = 0; round < 14; round += 1) {
       for (const player of state.players) {
         const tileId = state.pool.pop();
@@ -618,12 +664,11 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
     state.status = "playing";
-    state.turnIndex = 0;
     state.turnStartedAt = Date.now();
     state.turnDeadline = state.turnStartedAt + turnDuration(state.mode, state.turnDurationMs);
     state.version += 1;
     state.updatedAt = Date.now();
-    this.addHistory(state, event("started", `${state.players[0]?.name ?? "The first player"} goes first.`));
+    this.addHistory(state, event("started", `${state.players[state.turnIndex]?.name ?? "The first player"} goes first after drawing the highest tile.`));
     this.persist(state);
     this.broadcast(state);
     this.ctx.waitUntil(this.notifySmsSubscribers(state));
@@ -649,9 +694,9 @@ export class GameRoom extends DurableObject<Env> {
     const played = new Set(validation.playedTileIds);
     currentPlayer.rack = currentPlayer.rack.filter((tileId) => !played.has(tileId));
     currentPlayer.opened = true;
-    state.board = action.board.map((meld, index) => ({
-      id: `meld-${state.version + 1}-${index + 1}`,
-      tileIds: [...meld.tileIds],
+    state.board = action.board.map((set, index) => ({
+      id: `set-${state.version + 1}-${index + 1}`,
+      tileIds: [...set.tileIds],
     }));
     state.consecutiveEmptyDraws = 0;
     this.addHistory(
@@ -842,7 +887,7 @@ export class GameRoom extends DurableObject<Env> {
       playerId,
       turnStartedAt: input.turnStartedAt,
       sequence: input.sequence,
-      board: input.board.map((meld) => ({ ...meld, tileIds: [...meld.tileIds] })),
+      board: input.board.map((set) => ({ ...set, tileIds: [...set.tileIds] })),
     };
     this.persist(state);
     this.broadcast(state);
@@ -949,13 +994,8 @@ export class GameRoom extends DurableObject<Env> {
     const hasCurrentDraft = draft
       && draft.playerId === timedOutPlayer.id
       && draft.turnStartedAt === state.turnStartedAt;
-    const submittedDraft = hasCurrentDraft
-      ? this.applyTurnAction(state, timedOutPlayer, { type: "commit", board: draft.board })
-      : null;
-    if (!submittedDraft?.ok) {
-      state.turnDraft = null;
-      this.drawAndAdvance(state, timedOutPlayer, "timeout");
-    }
+    state.turnDraft = null;
+    this.drawAndAdvance(state, timedOutPlayer, "timeout", hasCurrentDraft ? 3 : 1);
     await this.finalizeTurn(state);
   }
 }

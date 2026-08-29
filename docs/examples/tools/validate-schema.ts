@@ -17,11 +17,22 @@ for (const file of files) {
   }
   console.log(`${file}: ${ok}/${lines.length} lines valid`);
 }
+// positive edge checks for private draw payloads (private may be withheld from another seat's stream)
+const accepts = [
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "player", drew: 0 },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "player", drew: 1, private: { tile: "c7a" } },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "timeout", drew: 2, private: { tiles: ["c7a", "s8b"] } },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "timeout", drew: 3 },
+];
+for (const value of accepts) if (!validate(value)) { bad += 1; console.log("should have been accepted:", JSON.stringify(value), validate.errors); }
 // negative checks: things the schema must reject
 const rejects = [
   { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "play", reason: "player", board: [["c7a", "c7b", "c7a"]], played: ["c7a"], extra: 1 },
   { seq: 5, at: 1, type: "turn", n: 1, player: "p9", action: "draw", reason: "player", drew: 1 },
-  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "player", drew: 2 },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "timeout", drew: 4 },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "timeout", drew: 2, private: { tile: "c7a" } },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "timeout", drew: 3, private: { tiles: ["c7a", "s8b"] } },
+  { seq: 5, at: 1, type: "turn", n: 1, player: "p1", action: "draw", reason: "player", drew: 0, private: { tile: "c7a" } },
   { id: "x", at: 1, type: "note", by: {}, text: "hi" },
   { id: "x", at: 1, type: "note", by: { name: "Ada" }, text: "hi", marks: ["!!!"] },
   { seq: 2, at: 1, type: "game" },

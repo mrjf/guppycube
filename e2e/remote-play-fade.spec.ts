@@ -27,7 +27,7 @@ function numberedTile(id: string): Tile {
     id,
     color: color as TileColor,
     value: Number(value),
-    wildcard: false,
+    wilcard: false,
   };
 }
 
@@ -58,7 +58,7 @@ function createState(remoteIsComputer: boolean): PublicGameState {
     currentPlayerId: viewerId,
     winnerId: null,
     poolCount: 80,
-    board: [{ id: "meld-initial", tileIds: initialBoardTileIds }],
+    board: [{ id: "set-initial", tileIds: initialBoardTileIds }],
     players: [
       {
         id: viewerId,
@@ -108,7 +108,7 @@ function createState(remoteIsComputer: boolean): PublicGameState {
     assistPolicy: {
       "no-move-alert": "default-on",
       "auto-draw": "default-off",
-      "rack-meld-highlights": "default-off",
+      "rack-set-highlights": "default-off",
     },
     enabledAssists: [],
     noMovePossible: false,
@@ -172,7 +172,7 @@ function stateWithRemotePlay(remoteTurn: PublicGameState): PublicGameState {
     currentPlayerId: viewerId,
     board: [
       ...remoteTurn.board,
-      { id: "meld-remote", tileIds: remotelyPlayedTileIds },
+      { id: "set-remote", tileIds: remotelyPlayedTileIds },
     ],
     players: remoteTurn.players.map((player) => player.id === remotePlayerId
       ? { ...player, rackCount: player.rackCount - remotelyPlayedTileIds.length }
@@ -201,7 +201,7 @@ function stateWithLocalCommit(remotePlay: PublicGameState): PublicGameState {
     currentPlayerId: remotePlayerId,
     board: [
       ...remotePlay.board,
-      { id: "meld-local", tileIds: locallyCommittedTileIds },
+      { id: "set-local", tileIds: locallyCommittedTileIds },
     ],
     players: remotePlay.players.map((player) => player.id === viewerId
       ? { ...player, rackCount: player.rackCount - locallyCommittedTileIds.length }
@@ -250,7 +250,7 @@ for (const remotePlayer of [
   { label: "Guppy Bot", isComputer: true },
   { label: "another user", isComputer: false },
 ] as const) {
-  test(`fades in only tiles newly played by ${remotePlayer.label}`, async ({ page }) => {
+  test(`fades in tiles newly played by ${remotePlayer.label} and the local player`, async ({ page }) => {
     const controlled = await openControlledGame(page, remotePlayer.isComputer);
     const tableTiles = page.locator(".table-surface .tile");
 
@@ -287,8 +287,8 @@ for (const remotePlayer of [
       name: getComputedStyle(tile).animationName,
       duration: getComputedStyle(tile).animationDuration,
     }))).toEqual({ name: "new-activity-fade-in", duration: "1.35s" });
-    await expect(page.locator(".meld.is-new-activity")).toHaveCount(1);
-    await expect(page.locator(".meld.is-new-activity .meld-activity-label")).toHaveCount(0);
+    await expect(page.locator(".set.is-new-activity")).toHaveCount(1);
+    await expect(page.locator(".set.is-new-activity .set-activity-label")).toHaveCount(0);
 
     controlled.sendState(stateWithLocalCommit(remotePlay));
     await expect(tableTiles).toHaveCount(
@@ -297,7 +297,7 @@ for (const remotePlayer of [
     for (const tileId of locallyCommittedTileIds) {
       const locallyCommittedTile = page.locator(`.table-surface .tile[data-tile-id="${tileId}"]`);
       await expect(locallyCommittedTile).toBeVisible();
-      await expect(locallyCommittedTile).not.toHaveClass(/\bis-new-activity\b/);
+      await expect(locallyCommittedTile).toHaveClass(/\bis-new-activity\b/);
     }
   });
 

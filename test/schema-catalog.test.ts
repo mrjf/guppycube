@@ -37,11 +37,11 @@ describe("schema catalog", () => {
       assistPolicy: {
         "no-move-alert": "default-on",
         "auto-draw": "sometimes",
-        "rack-meld-highlights": "default-off",
+        "rack-set-highlights": "default-off",
       },
     })).toBe(false);
     expect(validators.setAssistInput({ assistId: "auto-draw", enabled: true })).toBe(true);
-    expect(validators.setAssistInput({ assistId: "rack-meld-highlights", enabled: true })).toBe(true);
+    expect(validators.setAssistInput({ assistId: "rack-set-highlights", enabled: true })).toBe(true);
     expect(validators.setAssistInput({ assistId: "future-assist", enabled: true })).toBe(false);
   });
 });

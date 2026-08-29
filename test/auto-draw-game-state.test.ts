@@ -1,13 +1,13 @@
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../src/server/game-room";
-import type { Meld, StoredGame } from "../src/schemas";
+import type { GameSet, StoredGame } from "../src/schemas";
 
 type GameRoomStub = ReturnType<typeof env.GAME_ROOMS.getByName>;
 
 interface PlayingStateScenario {
   name: string;
-  board: Meld[];
+  board: GameSet[];
   rack: string[];
   opened: boolean;
   shouldAutoDraw: boolean;
@@ -17,13 +17,13 @@ interface PlayingStateScenario {
 const hostToken = "host-auto-draw-state-token";
 const guestToken = "guest-auto-draw-state-token";
 
-const meld = (id: string, tileIds: string[]): Meld => ({ id, tileIds });
+const set = (id: string, tileIds: string[]): GameSet => ({ id, tileIds });
 
-function denseBlockedBoard(): Meld[] {
-  const board: Meld[] = [];
+function denseBlockedBoard(): GameSet[] {
+  const board: GameSet[] = [];
   for (const color of ["coral", "sun", "ocean", "ink"] as const) {
     for (const copy of [1, 2] as const) {
-      board.push(meld(
+      board.push(set(
         `${color}-${copy}-long-run`,
         Array.from({ length: 11 }, (_, index) => `${color}-${index + 3}-${copy}`),
       ));
@@ -34,7 +34,7 @@ function denseBlockedBoard(): Meld[] {
 
 const scenarios: PlayingStateScenario[] = [
   {
-    name: "auto-draws an unopened player whose only meld is below 30 points",
+    name: "auto-draws an unopened player whose only set is below 30 points",
     board: [],
     rack: ["coral-9-1", "sun-9-1", "ocean-9-1", "ink-2-1"],
     opened: false,
@@ -48,7 +48,7 @@ const scenarios: PlayingStateScenario[] = [
     shouldAutoDraw: false,
   },
   {
-    name: "does not auto-draw when two disjoint opening melds total 30 points",
+    name: "does not auto-draw when two disjoint opening sets total 30 points",
     board: [],
     rack: [
       "coral-5-1", "sun-5-1", "ocean-5-1",
@@ -60,13 +60,13 @@ const scenarios: PlayingStateScenario[] = [
   },
   {
     name: "auto-draws an unopened player who could only extend the table",
-    board: [meld("table-group", ["coral-5-1", "sun-5-1", "ocean-5-1"])],
+    board: [set("table-group", ["coral-5-1", "sun-5-1", "ocean-5-1"])],
     rack: ["ink-5-1", "coral-1-1"],
     opened: false,
     shouldAutoDraw: true,
   },
   {
-    name: "does not auto-draw an opened player with a low-value rack-only meld",
+    name: "does not auto-draw an opened player with a low-value rack-only set",
     board: [],
     rack: ["coral-1-1", "sun-1-1", "ocean-1-1", "ink-8-1"],
     opened: true,
@@ -74,40 +74,40 @@ const scenarios: PlayingStateScenario[] = [
   },
   {
     name: "does not auto-draw an opened player who can extend an existing group",
-    board: [meld("table-group", ["coral-5-1", "sun-5-1", "ocean-5-1"])],
+    board: [set("table-group", ["coral-5-1", "sun-5-1", "ocean-5-1"])],
     rack: ["ink-5-1", "coral-1-1"],
     opened: true,
     shouldAutoDraw: false,
   },
   {
-    name: "does not auto-draw when the only move requires rearranging table melds",
+    name: "does not auto-draw when the only move requires rearranging table sets",
     board: [
-      meld("coral-run", ["coral-5-1", "coral-6-1", "coral-7-1", "coral-8-1", "coral-9-1"]),
-      meld("sun-run", ["sun-5-1", "sun-6-1", "sun-7-1", "sun-8-1", "sun-9-1"]),
+      set("coral-run", ["coral-5-1", "coral-6-1", "coral-7-1", "coral-8-1", "coral-9-1"]),
+      set("sun-run", ["sun-5-1", "sun-6-1", "sun-7-1", "sun-8-1", "sun-9-1"]),
     ],
     rack: ["ocean-9-1"],
     opened: true,
     shouldAutoDraw: false,
   },
   {
-    name: "does not auto-draw when a table wildcard can be replaced and replayed",
-    board: [meld("wildcard-run", ["ocean-7-1", "wildcard-1", "ocean-9-1"])],
+    name: "does not auto-draw when a table wilcard can be replaced and replayed",
+    board: [set("wilcard-run", ["ocean-7-1", "wilcard-1", "ocean-9-1"])],
     rack: ["ocean-8-1", "coral-5-1", "sun-5-1"],
     opened: true,
     shouldAutoDraw: false,
   },
   {
     name: "auto-draws an opened player whose tiles cannot join the table",
-    board: [meld("table-group", ["coral-5-1", "sun-5-1", "ocean-5-1"])],
+    board: [set("table-group", ["coral-5-1", "sun-5-1", "ocean-5-1"])],
     rack: ["coral-1-1", "sun-2-1"],
     opened: true,
     shouldAutoDraw: true,
   },
   {
-    name: "auto-draws when a rack tile can form a meld only by leaving invalid table leftovers",
+    name: "auto-draws when a rack tile can form a set only by leaving invalid table leftovers",
     board: [
-      meld("fives", ["coral-5-1", "sun-5-1", "ocean-5-1"]),
-      meld("sun-run", ["sun-6-1", "sun-7-1", "sun-8-1"]),
+      set("fives", ["coral-5-1", "sun-5-1", "ocean-5-1"]),
+      set("sun-run", ["sun-6-1", "sun-7-1", "sun-8-1"]),
     ],
     rack: ["sun-4-1"],
     opened: true,
@@ -157,6 +157,11 @@ async function replaceWithScenario(
     stored.turnStartedAt = Date.now();
     stored.turnDeadline = stored.turnStartedAt + 60_000;
     stored.board = scenario.board.map((item) => ({ ...item, tileIds: [...item.tileIds] }));
+    stored.assistPolicy = {
+      "no-move-alert": "default-on",
+      "auto-draw": "default-off",
+      "rack-set-highlights": "disallowed",
+    };
     host.rack = [...scenario.rack];
     host.opened = scenario.opened;
     host.enabledAssists = hostAutoDraw ? ["no-move-alert", "auto-draw"] : ["no-move-alert"];
@@ -329,7 +334,7 @@ describe("server auto-draw decisions from complete game states", () => {
 
     expect(await room.act("host", hostToken, {
       type: "commit",
-      board: [meld("host-play", ["coral-1-1", "sun-1-1", "ocean-1-1"])],
+      board: [set("host-play", ["coral-1-1", "sun-1-1", "ocean-1-1"])],
     })).toEqual({ ok: true });
 
     const guestBeforeAlarm = await room.getPublicState("guest", guestToken);

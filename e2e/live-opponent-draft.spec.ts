@@ -42,7 +42,7 @@ async function openTwoHumanSeats(browser: Browser): Promise<{
         assistPolicy: {
           "no-move-alert": "disallowed",
           "auto-draw": "disallowed",
-          "rack-meld-highlights": "disallowed",
+          "rack-set-highlights": "disallowed",
         },
       },
     });
@@ -117,8 +117,8 @@ test("shows a human opponent's live table attempt without exposing their private
     await expect(viewerTable).toHaveClass(/\bhas-board-defect\b/);
     await expect(viewerTable).toHaveAccessibleName(/live attempt by .*Needs attention:/i);
     await expect(viewer.page.locator(".table-drop-instruction")).toHaveCount(0);
-    await expect(viewer.page.locator(".meld.is-invalid")).toHaveCount(1);
-    await expect(viewer.page.locator(".meld-status")).toHaveCount(0);
+    await expect(viewer.page.locator(".set.is-invalid")).toHaveCount(1);
+    await expect(viewer.page.locator(".set-status")).toHaveCount(0);
 
     const draftAsSeenByActive = await getGame(active.context, roomCode);
     const draftAsSeenByViewer = await getGame(viewer.context, roomCode);

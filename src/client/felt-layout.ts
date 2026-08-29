@@ -30,13 +30,13 @@ export interface FeltLayoutObstacle {
 }
 
 const TILE_WIDTH = 51;
-const MELD_HEIGHT = 84;
-// Keep this in sync with `.meld { gap: 8px }`.  A smaller packing gap lets the
+const SET_HEIGHT = 84;
+// Keep this in sync with `.set { gap: 8px }`.  A smaller packing gap lets the
 // final tile extend past its reserved rectangle, which can put a real tile
-// underneath the draw pile even when the meld rectangle itself is clear.
+// underneath the draw pile even when the set rectangle itself is clear.
 const TILE_GAP = 8;
-const MELD_HORIZONTAL_CHROME = 42;
-const MELD_GAP = 12;
+const SET_HORIZONTAL_CHROME = 42;
+const SET_GAP = 12;
 const ROW_GAP = 8;
 const MIN_SCALE = 0.05;
 const SCALE_STEP = 0.01;
@@ -70,9 +70,9 @@ function overlapsTopRightObstacle(
     && placement.y + placement.height > 0;
 }
 
-function baseMeldWidth(tileCount: number): number {
+function baseSetWidth(tileCount: number): number {
   const count = Math.max(1, tileCount);
-  return MELD_HORIZONTAL_CHROME + count * TILE_WIDTH + (count - 1) * TILE_GAP;
+  return SET_HORIZONTAL_CHROME + count * TILE_WIDTH + (count - 1) * TILE_GAP;
 }
 
 function compareCanonical(left: FeltLayoutItem, right: FeltLayoutItem): number {
@@ -89,7 +89,7 @@ function compareCanonical(left: FeltLayoutItem, right: FeltLayoutItem): number {
 
 /**
  * Returns the stable packing order. The live board supplies its original board
- * order so a meld keeps its identity when its tile count changes. Standalone
+ * order so a set keeps its identity when its tile count changes. Standalone
  * callers retain the deterministic longest-first fallback.
  */
 export function canonicalFeltItems(items: readonly FeltLayoutItem[]): FeltLayoutItem[] {
@@ -104,7 +104,7 @@ function packRows(
   rowCapacities: readonly number[],
   previousPlacements: ReadonlyMap<string, FeltPlacement> | undefined,
 ): PackedRow[] | null {
-  const gap = Math.max(2, MELD_GAP * scale);
+  const gap = Math.max(2, SET_GAP * scale);
   const rows: PackedRow[] = Array.from(
     { length: rowCount },
     (_, rowIndex) => ({
@@ -155,7 +155,7 @@ function movementCost(
   scale: number,
   previousPlacements: ReadonlyMap<string, FeltPlacement>,
 ): { movedTiles: number; distance: number } {
-  const gap = Math.max(2, MELD_GAP * scale);
+  const gap = Math.max(2, SET_GAP * scale);
   let movedTiles = 0;
   let distance = 0;
   let x = left;
@@ -210,7 +210,7 @@ function layoutAtScale(
   obstacle?: FeltLayoutObstacle,
   previousPlacements?: ReadonlyMap<string, FeltPlacement>,
 ): FeltLayout | null {
-  const rowHeight = MELD_HEIGHT * scale;
+  const rowHeight = SET_HEIGHT * scale;
   const rowGap = Math.max(2, ROW_GAP * scale);
   const heightFor = (rowCount: number) => rowCount === 0
     ? 0
@@ -269,7 +269,7 @@ function layoutAtScale(
           row: rowIndex,
           order: item.canonicalIndex,
         });
-        x += width + Math.max(2, MELD_GAP * scale);
+        x += width + Math.max(2, SET_GAP * scale);
       });
     });
 
@@ -277,7 +277,7 @@ function layoutAtScale(
     placements.forEach((placement, order) => { placement.order = order; });
 
     // This is a final safety check, rather than relying only on row capacity:
-    // a scale is accepted only if every rendered meld rectangle is disjoint from
+    // a scale is accepted only if every rendered set rectangle is disjoint from
     // the draw-pile footprint.
     if (obstacle && placements.some((placement) =>
       overlapsTopRightObstacle(placement, availableWidth, obstacle)
@@ -296,8 +296,8 @@ function layoutAtScale(
 }
 
 /**
- * Packs the felt without scrollbars. Full-size melds are spread through four
- * rows before a second meld is added to a row; only then does the engine
+ * Packs the felt without scrollbars. Full-size sets are spread through four
+ * rows before a second set is added to a row; only then does the engine
  * progressively shrink the whole board.
  */
 export function createFeltLayout(
@@ -311,7 +311,7 @@ export function createFeltLayout(
   const height = Math.max(0, availableHeight);
   const canonical = canonicalFeltItems(items).map((item, canonicalIndex) => ({
     ...item,
-    baseWidth: baseMeldWidth(item.tileCount),
+    baseWidth: baseSetWidth(item.tileCount),
     canonicalIndex,
   }));
 

@@ -147,7 +147,7 @@ test("iPad Mini touch gestures produce the same landing-page states as mouse cli
   }
 });
 
-test("iPad Mini can tap a rack tile onto the table and pick up the whole meld", async ({ browser, request }) => {
+test("iPad Mini can tap a rack tile onto the table and pick up the whole set", async ({ browser, request }) => {
   test.setTimeout(30_000);
   const { context, page } = await openIpadMiniPage(browser, "iPad Mini");
   try {
@@ -187,31 +187,31 @@ test("iPad Mini can tap a rack tile onto the table and pick up the whole meld", 
     await firstRackTile.tap();
     await expect(firstRackTile).toHaveAttribute("aria-pressed", "true");
 
-    const newMeld = page.getByRole("button", { name: /New meld/ });
-    const selectionActionHeight = await newMeld.evaluate((button) => button.getBoundingClientRect().height);
+    const newSet = page.getByRole("button", { name: /New set/ });
+    const selectionActionHeight = await newSet.evaluate((button) => button.getBoundingClientRect().height);
     expect(selectionActionHeight).toBeGreaterThanOrEqual(40);
-    await newMeld.tap();
-    await expect(page.locator(".meld")).toHaveCount(1);
-    await expect(page.locator(".meld .tile")).toHaveCount(1);
+    await newSet.tap();
+    await expect(page.locator(".set")).toHaveCount(1);
+    await expect(page.locator(".set .tile")).toHaveCount(1);
 
-    const meldHandle = page.locator(".meld").first().locator(":scope > .meld-drag-handle");
-    await expect(meldHandle).toBeVisible();
-    await expect(meldHandle).toHaveAccessibleName("Pick up meld 1");
-    await expect(meldHandle).toHaveCSS("opacity", "1");
-    await expect(meldHandle).toHaveCSS("pointer-events", "auto");
-    const handleSize = await meldHandle.evaluate((handle) => {
+    const setHandle = page.locator(".set").first().locator(":scope > .set-drag-handle");
+    await expect(setHandle).toBeVisible();
+    await expect(setHandle).toHaveAccessibleName("Pick up set 1");
+    await expect(setHandle).toHaveCSS("opacity", "1");
+    await expect(setHandle).toHaveCSS("pointer-events", "auto");
+    const handleSize = await setHandle.evaluate((handle) => {
       const bounds = handle.getBoundingClientRect();
       return { width: bounds.width, height: bounds.height };
     });
     expect(handleSize.width).toBeGreaterThanOrEqual(32);
     expect(handleSize.height).toBeGreaterThanOrEqual(44);
 
-    await meldHandle.tap();
-    await expect(meldHandle).toHaveAttribute("aria-pressed", "true");
-    await expect(meldHandle).toHaveAccessibleName("Put down meld 1");
-    await expect(page.getByRole("button", { name: /Cancel meld move/ })).toBeVisible();
-    await meldHandle.tap();
-    await expect(meldHandle).toHaveAttribute("aria-pressed", "false");
+    await setHandle.tap();
+    await expect(setHandle).toHaveAttribute("aria-pressed", "true");
+    await expect(setHandle).toHaveAccessibleName("Put down set 1");
+    await expect(page.getByRole("button", { name: /Cancel set move/ })).toBeVisible();
+    await setHandle.tap();
+    await expect(setHandle).toHaveAttribute("aria-pressed", "false");
   } finally {
     await context.close();
   }

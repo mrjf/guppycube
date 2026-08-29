@@ -1,9 +1,23 @@
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { hashToken } from "../src/server/game-room";
+import { chooseStartingPlayerIndex, hashToken } from "../src/server/game-room";
+import { createTileSet } from "../src/shared/rules";
 import type { StoredGame } from "../src/schemas";
 
 describe("GameRoom", () => {
+  it("sets tied starting-player draws aside until the tie is resolved", () => {
+    const pool = ["coral-2-1", "sun-9-1", "ocean-7-1", "ink-7-1"];
+
+    expect(chooseStartingPlayerIndex(2, pool, createTileSet())).toBe(0);
+    expect(pool).toHaveLength(4);
+    expect(new Set(pool)).toEqual(new Set([
+      "coral-2-1",
+      "sun-9-1",
+      "ocean-7-1",
+      "ink-7-1",
+    ]));
+  });
+
   it("creates, fills, starts, and advances a two-player game", async () => {
     const roomCode = `T${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
     const hostToken = "host-test-token";
@@ -49,10 +63,73 @@ describe("GameRoom", () => {
     expect(drawer?.rackCount).toBe(15);
   });
 
-  it("upgrades persisted wildcard tiles from the former representation", async () => {
+  it("passes and finishes the game after everyone draws from an empty pool", async () => {
+    const roomCode = `E${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
+    const hostToken = "empty-pool-host-token";
+    const guestToken = "empty-pool-guest-token";
+    const room = env.GAME_ROOMS.getByName(roomCode);
+
+    expect(await room.create(
+      roomCode,
+      { name: "Ada", mode: "realtime", maxPlayers: 2 },
+      "host",
+      await hashToken(hostToken),
+    )).toEqual({ ok: true });
+    expect(await room.join("Grace", "guest", await hashToken(guestToken))).toEqual({ ok: true });
+    expect(await room.start("host", hostToken)).toEqual({ ok: true });
+
+    await runInDurableObject(room, (_instance, state) => {
+      const row = state.storage.sql.exec<{ json: string }>(
+        "SELECT json FROM game_state WHERE singleton = 1",
+      ).one();
+      const stored = JSON.parse(row.json) as StoredGame;
+      const host = stored.players.find((player) => player.id === "host");
+      const guest = stored.players.find((player) => player.id === "guest");
+      if (!host || !guest) throw new Error("Expected both empty-pool test players.");
+
+      host.rack = ["coral-1-1"];
+      guest.rack = ["coral-2-1"];
+      stored.pool = [];
+      stored.board = [];
+      stored.turnIndex = stored.players.indexOf(host);
+      stored.status = "playing";
+      stored.turnStartedAt = Date.now();
+      stored.turnDeadline = stored.turnStartedAt + 60_000;
+      stored.turnDraft = null;
+      stored.consecutiveEmptyDraws = 0;
+      stored.winnerId = null;
+      stored.scores = null;
+      stored.version += 1;
+      stored.updatedAt = Date.now();
+      state.storage.sql.exec(
+        "UPDATE game_state SET json = ?, updated_at = ? WHERE singleton = 1",
+        JSON.stringify(stored),
+        stored.updatedAt,
+      );
+    });
+    await evictDurableObject(room);
+
+    expect(await room.act("host", hostToken, { type: "draw" })).toEqual({ ok: true });
+    const afterHostPass = await room.getPublicState("host", hostToken);
+    expect(afterHostPass.status).toBe("playing");
+    expect(afterHostPass.currentPlayerId).toBe("guest");
+    expect(afterHostPass.history.at(-1)?.message).toBe("Ada passed because the pool is empty.");
+
+    expect(await room.act("guest", guestToken, { type: "draw" })).toEqual({ ok: true });
+    const finished = await room.getPublicState("host", hostToken);
+    expect(finished.status).toBe("finished");
+    expect(finished.winnerId).toBe("host");
+    expect(finished.history.at(-1)?.message).toBe("Ada won the blocked game with the lowest rack.");
+  });
+
+  it("upgrades persisted wilcard tiles from the former representation", async () => {
+    const legacyWilcardFlag = ["j", "oker"].join("");
+    const legacyWilcardPrefix = `${legacyWilcardFlag}-`;
+    const priorWilcardFlag = ["wild", "card"].join("");
+    const priorWilcardPrefix = `${priorWilcardFlag}-`;
     const roomCode = `W${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
-    const hostToken = "host-wildcard-upgrade-token";
-    const guestToken = "guest-wildcard-upgrade-token";
+    const hostToken = "host-wilcard-upgrade-token";
+    const guestToken = "guest-wilcard-upgrade-token";
     const room = env.GAME_ROOMS.getByName(roomCode);
 
     expect(await room.create(
@@ -68,13 +145,17 @@ describe("GameRoom", () => {
         "SELECT json FROM game_state WHERE singleton = 1",
       ).one();
       const stored = JSON.parse(row.json) as Record<string, unknown>;
-      const tiles = stored.tiles as Record<string, { id: string; wildcard: boolean; [key: string]: unknown }>;
+      const tiles = stored.tiles as Record<string, { id: string; wilcard: boolean; [key: string]: unknown }>;
       stored.tiles = Object.fromEntries(Object.entries(tiles).map(([id, tile]) => {
-        const legacyId = id.replace(/^wildcard-/, "joker-");
-        const { wildcard, ...legacyTile } = tile;
-        return [legacyId, { ...legacyTile, id: legacyId, joker: wildcard }];
+        const legacyId = id.replace(/^wilcard-/, id.endsWith("-1") ? legacyWilcardPrefix : priorWilcardPrefix);
+        const { wilcard, ...legacyTile } = tile;
+        const legacyFlag = id.endsWith("-1") ? legacyWilcardFlag : priorWilcardFlag;
+        return [legacyId, { ...legacyTile, id: legacyId, [legacyFlag]: wilcard }];
       }));
-      stored.pool = (stored.pool as string[]).map((id) => id.replace(/^wildcard-/, "joker-"));
+      stored.pool = (stored.pool as string[]).map((id) => id.replace(
+        /^wilcard-/,
+        id.endsWith("-1") ? legacyWilcardPrefix : priorWilcardPrefix,
+      ));
       state.storage.sql.exec(
         "UPDATE game_state SET json = ?, updated_at = ? WHERE singleton = 1",
         JSON.stringify(stored),
@@ -85,16 +166,16 @@ describe("GameRoom", () => {
 
     expect(await room.start("host", hostToken)).toEqual({ ok: true });
     const view = await room.getPublicState("host", hostToken);
-    expect(view.tiles["wildcard-1"]).toEqual({
-      id: "wildcard-1", color: null, value: null, wildcard: true,
+    expect(view.tiles["wilcard-1"]).toEqual({
+      id: "wilcard-1", color: null, value: null, wilcard: true,
     });
-    expect(view.tiles["wildcard-2"]).toEqual({
-      id: "wildcard-2", color: null, value: null, wildcard: true,
+    expect(view.tiles["wilcard-2"]).toEqual({
+      id: "wilcard-2", color: null, value: null, wilcard: true,
     });
-    expect(view.tiles).not.toHaveProperty("joker-1");
+    expect(view.tiles).not.toHaveProperty(`${legacyWilcardPrefix}1`);
   });
 
-  it("commits a qualifying opening plus table extension as one atomic state transition", async () => {
+  it("rejects a qualifying opening that extends a table set", async () => {
     const roomCode = `O${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
     const hostToken = "host-opening-extension-token";
     const guestToken = "guest-opening-extension-token";
@@ -136,7 +217,7 @@ describe("GameRoom", () => {
 
       const hostRack = [...playedTileIds, "sun-1-1"];
       const assigned = new Set([
-        ...previousBoard.flatMap((meld) => meld.tileIds),
+        ...previousBoard.flatMap((set) => set.tileIds),
         ...hostRack,
       ]);
       const remainingTileIds = Object.keys(stored.tiles).filter((tileId) => !assigned.has(tileId));
@@ -166,15 +247,17 @@ describe("GameRoom", () => {
     expect(before.myRack).toEqual([...playedTileIds, "sun-1-1"]);
     expect(before.players.find((player) => player.id === "host")?.opened).toBe(false);
 
-    expect(await room.act("host", hostToken, { type: "commit", board: proposedBoard })).toEqual({ ok: true });
+    expect(await room.act("host", hostToken, { type: "commit", board: proposedBoard })).toEqual({
+      ok: false,
+      error: "Your opening turn can only use tiles from your rack; existing sets must stay unchanged.",
+    });
 
     const after = await room.getPublicState("host", hostToken);
-    expect(after.version).toBe(before.version + 1);
-    expect(after.currentPlayerId).toBe("guest");
-    expect(after.myRack).toEqual(["sun-1-1"]);
-    expect(after.players.find((player) => player.id === "host")?.opened).toBe(true);
-    expect(after.board.map((meld) => meld.tileIds)).toEqual(proposedBoard.map((meld) => meld.tileIds));
-    expect(after.history.at(-1)?.message).toBe("Ada played 7 tiles and opened with 54.");
+    expect(after.version).toBe(before.version);
+    expect(after.currentPlayerId).toBe("host");
+    expect(after.myRack).toEqual([...playedTileIds, "sun-1-1"]);
+    expect(after.players.find((player) => player.id === "host")?.opened).toBe(false);
+    expect(after.board).toEqual(previousBoard);
   });
 
   it("enforces the four-player maximum", async () => {
@@ -241,7 +324,7 @@ describe("GameRoom", () => {
         assistPolicy: {
           "no-move-alert": "default-off",
           "auto-draw": "disallowed",
-          "rack-meld-highlights": "default-off",
+          "rack-set-highlights": "default-off",
         },
       },
       "host",
@@ -252,7 +335,7 @@ describe("GameRoom", () => {
     expect(initial.assistPolicy).toEqual({
       "no-move-alert": "default-off",
       "auto-draw": "disallowed",
-      "rack-meld-highlights": "default-off",
+      "rack-set-highlights": "default-off",
     });
     expect(initial.enabledAssists).toEqual([]);
     expect(await room.setAssist("host", hostToken, "no-move-alert", true)).toEqual({ ok: true });
@@ -272,7 +355,16 @@ describe("GameRoom", () => {
 
     expect(await room.create(
       roomCode,
-      { name: "Ada", mode: "realtime", maxPlayers: 2 },
+      {
+        name: "Ada",
+        mode: "realtime",
+        maxPlayers: 2,
+        assistPolicy: {
+          "no-move-alert": "disallowed",
+          "auto-draw": "default-off",
+          "rack-set-highlights": "disallowed",
+        },
+      },
       "host",
       await hashToken(hostToken),
     )).toEqual({ ok: true });
@@ -303,7 +395,7 @@ describe("GameRoom", () => {
     expect(await room.setAssist(currentPlayerId, tokenByPlayer[currentPlayerId], "auto-draw", true)).toEqual({ ok: true });
     const beforeAlarm = await room.getPublicState(currentPlayerId, tokenByPlayer[currentPlayerId]);
     expect(beforeAlarm.noMovePossible).toBe(true);
-    expect(beforeAlarm.enabledAssists).toEqual(["no-move-alert", "auto-draw"]);
+    expect(beforeAlarm.enabledAssists).toEqual(["auto-draw"]);
 
     expect(await runDurableObjectAlarm(room)).toBe(true);
     const afterAlarm = await room.getPublicState(currentPlayerId, tokenByPlayer[currentPlayerId]);

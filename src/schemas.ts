@@ -25,11 +25,11 @@ export const TILE_COLORS = ["coral", "sun", "ocean", "ink"] as const;
 export const TILE_NUMBER_MIN = 1;
 export const TILE_NUMBER_MAX = 13;
 export const TILE_COPIES_PER_NUMBER_AND_COLOR = 2;
-export const WILDCARD_TILE_COUNT = 2;
+export const WILCARD_TILE_COUNT = 2;
 export const TILE_SET_SIZE = TILE_COLORS.length
   * (TILE_NUMBER_MAX - TILE_NUMBER_MIN + 1)
   * TILE_COPIES_PER_NUMBER_AND_COLOR
-  + WILDCARD_TILE_COUNT;
+  + WILCARD_TILE_COUNT;
 export const COMPUTER_STRATEGIES = ["basic"] as const;
 
 const nullableComputerStrategy = {
@@ -63,12 +63,12 @@ const tileShape = {
     id: identifier,
     color: { anyOf: [{ enum: TILE_COLORS }, { type: "null" }] },
     value: { anyOf: [{ type: "integer", minimum: TILE_NUMBER_MIN, maximum: TILE_NUMBER_MAX }, { type: "null" }] },
-    wildcard: { type: "boolean" },
+    wilcard: { type: "boolean" },
   },
-  required: ["id", "color", "value", "wildcard"],
+  required: ["id", "color", "value", "wilcard"],
 } as const;
 
-const meldShape = {
+const setShape = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -85,7 +85,7 @@ const turnDraftShape = {
     playerId: identifier,
     turnStartedAt: timestamp,
     sequence: timestamp,
-    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
+    board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
   },
   required: ["playerId", "turnStartedAt", "sequence", "board"],
 } as const;
@@ -156,7 +156,7 @@ const turnActionVariants = [
     additionalProperties: false,
     properties: {
       type: { const: "commit" },
-      board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
+      board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
     },
     required: ["type", "board"],
   },
@@ -178,10 +178,10 @@ export const tileSchema = {
   ...tileShape,
 } as const;
 
-export const meldSchema = {
+export const setSchema = {
   $schema: dialect,
-  $id: "https://guppycube.local/schemas/meld",
-  ...meldShape,
+  $id: "https://guppycube.local/schemas/set",
+  ...setShape,
 } as const;
 
 export const publicPlayerSchema = {
@@ -212,12 +212,12 @@ const publicGameStateShape = {
     currentPlayerId: nullableIdentifier,
     winnerId: nullableIdentifier,
     poolCount: { type: "integer", minimum: 0, maximum: TILE_SET_SIZE },
-    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
+    board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
     players: { type: "array", items: publicPlayerShape, minItems: 1, maxItems: 4 },
     myPlayerId: identifier,
     myRack: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
-    turnDraft: { anyOf: [{ type: "array", items: meldShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
-    myTurnDraft: { anyOf: [{ type: "array", items: meldShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
+    turnDraft: { anyOf: [{ type: "array", items: setShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
+    myTurnDraft: { anyOf: [{ type: "array", items: setShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
     tiles: { type: "object", additionalProperties: tileShape, maxProperties: TILE_SET_SIZE },
     history: { type: "array", items: gameEventShape, maxItems: 12 },
     scores: scoreShape,
@@ -286,7 +286,7 @@ export const storedGameSchema = {
     winnerId: nullableIdentifier,
     players: { type: "array", items: storedPlayerShape, minItems: 1, maxItems: 4 },
     pool: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
-    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
+    board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
     tiles: { type: "object", additionalProperties: tileShape, maxProperties: TILE_SET_SIZE },
     history: { type: "array", items: gameEventShape, maxItems: 40 },
     scores: scoreShape,
@@ -402,7 +402,7 @@ export const saveTurnDraftInputSchema = {
   properties: {
     turnStartedAt: timestamp,
     sequence: timestamp,
-    board: { type: "array", items: meldShape, maxItems: TILE_SET_SIZE },
+    board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
   },
   required: ["turnStartedAt", "sequence", "board"],
 } as const;
@@ -686,7 +686,7 @@ export const schemaCatalogResponseSchema = {
 
 export type Tile = FromSchema<typeof tileSchema>;
 export type TileColor = NonNullable<Tile["color"]>;
-export type Meld = FromSchema<typeof meldSchema>;
+export type GameSet = FromSchema<typeof setSchema>;
 export type PublicPlayer = FromSchema<typeof publicPlayerSchema>;
 export type GameEvent = FromSchema<typeof gameEventSchema>;
 export type PublicGameState = FromSchema<typeof publicGameStateSchema>;

@@ -40,13 +40,16 @@ test("keeps the felt fixed when drag actions appear in the rack", async ({ page 
         <section class="table-surface is-open-drop-target"></section>
       </div>
       <section class="rack-zone">
-        <div class="turn-actions">
-          <div class="turn-action-copy">
-            <div class="turn-guidance">Your play is ready to commit.</div>
-          </div>
-          <div class="action-buttons">
-            <button type="button">Draw &amp; end</button>
-            <button type="button">Commit turn</button>
+        <div class="rack-heading">
+          <div class="rack-tools">
+            <div class="rack-sort-tools" aria-label="Rack sorting">
+              <button type="button">Color → 123</button>
+              <button type="button">123 → Color</button>
+            </div>
+            <div class="rack-action-tools" aria-label="Turn actions">
+              <button type="button">Draw</button>
+              <button type="button">Commit</button>
+            </div>
           </div>
         </div>
       </section>
@@ -55,10 +58,10 @@ test("keeps the felt fixed when drag actions appear in the rack", async ({ page 
 
   const felt = page.locator(".table-surface");
   const before = await felt.boundingBox();
-  await page.locator(".turn-action-copy").evaluate((element) => {
+  await page.locator(".rack-sort-tools").evaluate((element) => {
     element.insertAdjacentHTML("beforeend", `
       <div class="selection-actions" aria-label="Selection actions">
-        <button type="button">New meld</button>
+        <button type="button">New set</button>
         <button type="button">Clear selection</button>
       </div>
     `);
