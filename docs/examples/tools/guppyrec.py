@@ -10,7 +10,7 @@ COLOR_NAMES = {"c": "coral", "s": "sun", "o": "ocean", "i": "ink"}
 NUM_MIN, NUM_MAX = 1, 13
 COPIES = "ab"
 OPENING_MINIMUM = 30
-WILDCARD_PENALTY = 30
+WILCARD_PENALTY = 30
 RACK_SIZE = 14
 
 
@@ -87,7 +87,7 @@ def validate_run(tiles: list[Tile]):
     return ("run", points)
 
 
-def validate_meld(tile_ids: list[str]):
+def validate_set(tile_ids: list[str]):
     tiles = [parse_tile(t) for t in tile_ids]
     return validate_group(tiles) or validate_run(tiles)
 
@@ -101,7 +101,7 @@ def validate_turn(previous_board, proposed_board, rack, opened):
     prop_set = set(prop_ids)
     missing = [t for t in prev_ids if t not in prop_set]
     if any(parse_tile(t).wild for t in missing):
-        return False, "wildcard removed from table", [], 0
+        return False, "wilcard removed from table", [], 0
     if missing:
         return False, "table tile returned to rack", [], 0
     rack_set = set(rack)
@@ -111,14 +111,19 @@ def validate_turn(previous_board, proposed_board, rack, opened):
         return False, "tile not in rack", [], 0
     if not played:
         return False, "nothing played", [], 0
-    for i, meld in enumerate(proposed_board):
-        if validate_meld(meld) is None:
-            return False, f"meld {i + 1} invalid", [], 0
+    if not opened:
+        previous_sets = {tuple(tile_set) for tile_set in previous_board}
+        proposed_sets = {tuple(tile_set) for tile_set in proposed_board}
+        if not previous_sets.issubset(proposed_sets):
+            return False, "opening changed existing set", [], 0
+    for i, tile_set in enumerate(proposed_board):
+        if validate_set(tile_set) is None:
+            return False, f"set {i + 1} invalid", [], 0
     if opened:
         return True, None, played, 0
     played_set = set(played)
     opening = [m for m in proposed_board if all(t in played_set for t in m)]
-    points = sum(validate_meld(m)[1] for m in opening)
+    points = sum(validate_set(m)[1] for m in opening)
     if points < OPENING_MINIMUM:
         return False, f"opening {points} < {OPENING_MINIMUM}", [], points
     return True, None, played, points
@@ -128,11 +133,11 @@ def rack_penalty(rack: list[str]) -> int:
     total = 0
     for t in rack:
         tile = parse_tile(t)
-        total += WILDCARD_PENALTY if tile.wild else tile.value
+        total += WILCARD_PENALTY if tile.wild else tile.value
     return total
 
 
-# ---------- seeded shuffle "fy-sha256/1" ----------
+# ---------- seeded shuffle "fy-sha256-highest/1" ----------
 
 class Prng:
     """Deterministic 32-bit word stream: block_k = SHA-256(seed || uint32be(k))."""
@@ -168,14 +173,35 @@ def fisher_yates(items, prng: Prng):
     return a
 
 
+def tile_number(tile_id: str) -> int:
+    """The starter-draw value: numbered tiles use their number; wilcards are zero."""
+    tile = parse_tile(tile_id)
+    return tile.value if tile.value is not None else 0
+
+
+def choose_starting_seat_index(player_count: int, pool: list[str]) -> int:
+    """Draw high, setting all drawn tiles aside until any tie is resolved."""
+    candidates = list(range(player_count))
+    drawn: list[str] = []
+    while len(candidates) > 1 and len(pool) >= len(candidates):
+        picks = [(index, pool.pop()) for index in candidates]
+        drawn.extend(tile_id for _, tile_id in picks)
+        highest = max(tile_number(tile_id) for _, tile_id in picks)
+        candidates = [index for index, tile_id in picks if tile_number(tile_id) == highest]
+    pool.extend(drawn)
+    return candidates[0] if candidates else 0
+
+
 def seeded_start(seed: bytes, seats_in_join_order: list[str]):
     """Returns (turn_order, pool, racks) exactly as the spec defines."""
     prng = Prng(seed)
-    order = fisher_yates(seats_in_join_order, prng)
     pool = fisher_yates(canonical_tiles(), prng)
-    racks = {p: [] for p in order}
+    first = choose_starting_seat_index(len(seats_in_join_order), pool)
+    pool = fisher_yates(pool, prng)
+    order = seats_in_join_order[first:] + seats_in_join_order[:first]
+    racks = {p: [] for p in seats_in_join_order}
     for _ in range(RACK_SIZE):
-        for p in order:
+        for p in seats_in_join_order:
             racks[p].append(pool.pop())
     return order, pool, racks
 

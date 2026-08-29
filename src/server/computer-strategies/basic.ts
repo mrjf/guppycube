@@ -1,29 +1,29 @@
-import { validateMeld, validateTurn } from "../../shared/rules";
+import { validateSet, validateTurn } from "../../shared/rules";
 import { TILE_COLORS } from "../../shared/types";
-import type { Meld } from "../../schemas";
+import type { GameSet } from "../../schemas";
 import type { ComputerStrategy, ComputerTurnContext } from "./types";
 
-interface MeldCandidate {
+interface SetCandidate {
   tileIds: string[];
   points: number;
 }
 
 function addCandidate(
-  candidates: MeldCandidate[],
+  candidates: SetCandidate[],
   tileIds: string[],
   context: ComputerTurnContext,
 ): void {
-  const validation = validateMeld(tileIds, context.tiles);
+  const validation = validateSet(tileIds, context.tiles);
   if (validation.valid) candidates.push({ tileIds, points: validation.points });
 }
 
-function groupCandidates(context: ComputerTurnContext): MeldCandidate[] {
-  const candidates: MeldCandidate[] = [];
+function groupCandidates(context: ComputerTurnContext): SetCandidate[] {
+  const candidates: SetCandidate[] = [];
   for (let value = 1; value <= 13; value += 1) {
     const tileIds = TILE_COLORS.flatMap((color) => {
       const tileId = context.rack.find((id) => {
         const tile = context.tiles[id];
-        if (!tile || tile.wildcard) return false;
+        if (!tile || tile.wilcard) return false;
         return tile.color === color && tile.value === value;
       });
       return tileId ? [tileId] : [];
@@ -33,13 +33,13 @@ function groupCandidates(context: ComputerTurnContext): MeldCandidate[] {
   return candidates;
 }
 
-function runCandidates(context: ComputerTurnContext): MeldCandidate[] {
-  const candidates: MeldCandidate[] = [];
+function runCandidates(context: ComputerTurnContext): SetCandidate[] {
+  const candidates: SetCandidate[] = [];
   for (const color of TILE_COLORS) {
     const tileIdByValue = new Map<number, string>();
     for (const tileId of context.rack) {
       const tile = context.tiles[tileId];
-      if (tile && !tile.wildcard && tile.color === color && tile.value !== null && !tileIdByValue.has(tile.value)) {
+      if (tile && !tile.wilcard && tile.color === color && tile.value !== null && !tileIdByValue.has(tile.value)) {
         tileIdByValue.set(tile.value, tileId);
       }
     }
@@ -61,7 +61,7 @@ function runCandidates(context: ComputerTurnContext): MeldCandidate[] {
   return candidates;
 }
 
-function proposedBoard(context: ComputerTurnContext, tileIds: string[]): Meld[] {
+function proposedBoard(context: ComputerTurnContext, tileIds: string[]): GameSet[] {
   return [
     ...context.board,
     { id: `computer-${context.version + 1}`, tileIds },

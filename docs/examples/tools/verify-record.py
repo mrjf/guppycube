@@ -1,4 +1,4 @@
-"""Independent verifier for a guppycube-record/1 file: structure, hash chain, seeded deal, legality, scores, annotations."""
+"""Independent verifier for a guppycube-record/2 file: structure, hash chain, seeded deal, legality, scores, annotations."""
 from __future__ import annotations
 
 import hashlib
@@ -7,7 +7,7 @@ import re
 import sys
 
 from guppyrec import (
-    COPIES, OPENING_MINIMUM, event_hash, parse_tile, rack_penalty, seeded_start, validate_meld, validate_turn,
+    COPIES, OPENING_MINIMUM, event_hash, parse_tile, rack_penalty, seeded_start, validate_set, validate_turn,
 )
 
 EXACT_TILE = re.compile(r"^([csoi](1[0-3]|[1-9])|\*)[ab]$")
@@ -21,14 +21,14 @@ def fail(msg):
 
 
 def check_board(board):
-    for meld in board:
-        if not isinstance(meld, list) or not meld:
-            fail(f"bad meld {meld}")
-        for t in meld:
+    for set in board:
+        if not isinstance(set, list) or not set:
+            fail(f"bad set {set}")
+        for t in set:
             if not EXACT_TILE.match(t):
                 fail(f"bad tile id {t}")
-        if validate_meld(meld) is None:
-            fail(f"invalid meld {meld}")
+        if validate_set(set) is None:
+            fail(f"invalid set {set}")
 
 
 def main(path):
@@ -59,11 +59,13 @@ def main(path):
             fail(f"hash mismatch at seq {e['seq']}")
         prev = e["hash"]
     header = events[0]
-    if header["type"] != "game" or header["format"] != "guppycube-record/1":
+    if header["type"] != "game" or header["format"] != "guppycube-record/2":
         fail("bad header")
     rules = header["rules"]
     if rules["openingMinimum"] != OPENING_MINIMUM:
         fail("verifier only knows openingMinimum 30")
+    if header["engine"]["rules"] != "guppycube-core/2.0.0":
+        fail("unknown rules engine")
 
     # --- seats, start, seeded deal ---
     seats = [e["player"] for e in events if e["type"] == "seat"]
@@ -80,11 +82,11 @@ def main(path):
     seed = bytes.fromhex(reveal["seed"])
     if hashlib.sha256(seed).hexdigest() != start["shuffleCommit"]:
         fail("shuffleCommit does not match the revealed seed")
-    if reveal["algorithm"] != header["engine"]["shuffle"] != "fy-sha256/1":
+    if reveal["algorithm"] != "fy-sha256-highest/1" or header["engine"]["shuffle"] != "fy-sha256-highest/1":
         fail("unknown shuffle algorithm")
     order, pool, racks = seeded_start(seed, seat_ids)
     if order != start["order"]:
-        fail(f"seating order mismatch: {order} vs {start['order']}")
+        fail(f"turn order mismatch: {order} vs {start['order']}")
     if len(pool) != start["pool"]:
         fail("pool size mismatch")
 
@@ -97,7 +99,7 @@ def main(path):
         target["private"] = priv
 
     deals = [e for e in events if e["type"] == "deal"]
-    if [d["player"] for d in deals] != order:
+    if [d["player"] for d in deals] != seat_ids:
         fail("deal order mismatch")
     for d in deals:
         if d["private"]["rack"] != racks[d["player"]] or d["count"] != len(racks[d["player"]]):
@@ -137,16 +139,24 @@ def main(path):
             board = e["board"]
             empty = 0
         elif e["action"] == "draw":
-            if pool:
-                tile = pool.pop()
-                if e["drew"] != 1 or e.get("private", {}).get("tile") != tile:
-                    fail(f"turn {e['n']} draw mismatch (expected {tile})")
-                racks[p].append(tile)
-                empty = 0
-            else:
-                if e["drew"] != 0 or "private" in e:
+            count = e["drew"]
+            if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 3:
+                fail(f"turn {e['n']} bad draw count")
+            if count > 1 and e["reason"] != "timeout":
+                fail(f"turn {e['n']} multiple draws require a timeout")
+            if count == 0:
+                if pool or "private" in e:
                     fail(f"turn {e['n']} should be an empty draw")
                 empty += 1
+            else:
+                if len(pool) < count:
+                    fail(f"turn {e['n']} drew more tiles than remained")
+                tiles = [pool.pop() for _ in range(count)]
+                expected_private = {"tile": tiles[0]} if count == 1 else {"tiles": tiles}
+                if e.get("private") != expected_private:
+                    fail(f"turn {e['n']} draw mismatch (expected {expected_private})")
+                racks[p].extend(tiles)
+                empty = 0
         else:
             fail("bad action")
     end = next(e for e in events if e["type"] == "end")
@@ -218,8 +228,10 @@ def main(path):
             t = by_seq_turn = next(x for x in events if x["type"] == "turn" and x["n"] == n)
             if t["action"] == "play":
                 after[t["player"]] = [x for x in after[t["player"]] if x not in set(t["played"])]
-            elif t["drew"]:
+            elif t["drew"] == 1:
                 after[t["player"]].append(t["private"]["tile"])
+            elif t["drew"] > 1:
+                after[t["player"]].extend(t["private"]["tiles"])
             for q, v in a["facts"]["rackValue"].items():
                 if rack_penalty(after[q]) != v:
                     fail(f"eval {a['id']} rackValue wrong for {q}")

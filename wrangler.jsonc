@@ -4,6 +4,15 @@
   "main": "src/server/index.ts",
   "compatibility_date": "2026-08-18",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": [
+      "TWILIO_SID",
+      "TWILIO_CLIENT_SECRET",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_FROM_NUMBER"
+    ]
+  },
   "routes": [
     {
       "pattern": "snagsby.com/guppycube",

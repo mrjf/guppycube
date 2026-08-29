@@ -1,8 +1,8 @@
-import type { ComputerStrategyId, Meld, Tile, TurnAction } from "../../schemas";
+import type { ComputerStrategyId, GameSet, Tile, TurnAction } from "../../schemas";
 
 export interface ComputerTurnContext {
   version: number;
-  board: Meld[];
+  board: GameSet[];
   rack: string[];
   opened: boolean;
   tiles: Record<string, Tile>;

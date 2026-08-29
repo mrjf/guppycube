@@ -5,26 +5,61 @@
 [Mode "realtime"]
 [Seats "Ada, Bo, Guppy Bot (computer)"]
 [Order "Bo, Guppy Bot, Ada"]
-[ShuffleCommit "47bc6cc7b55bb1e3fad38a77a82b89f5d0fbf16390b3c737f301838213e4a263"]
-[Result "Ada went out; Ada +132, Guppy Bot -60, Bo -72"]
-{Ada: Short one. Worth replaying for the wildcard group on turn 1.}
+[ShuffleCommit "16421346fa86407cd735f2021d41d2c0560ae00795cc4a8b1cba5ca538091b30"]
+[Result "Guppy Bot went out; Guppy Bot +117, Ada -58, Bo -59"]
+{Ada: Worth replaying for the opening wilcard group.}
 
-Deal Bo: i11 s10 s7 i6 c3 s1 c4 c12 c1 s12 o11 * c2 i10
-Deal Guppy Bot: s6 i13 o6 s11 c2 s4 s5 s11 c13 o10 c7 o3 o1 i9
-Deal Ada: o3 o9 o11 c8 c6 o12 c3 c7 * o12 s1 c5 c1 o1
+Deal Ada: c4 c3 o1 o11 o7 c1 o12 o4 c3 o9 c1 s6 i4 o8
+Deal Bo: i5 s8 o5 i10 c2 s9 c10 i12 s13 s6 i5 i13 s9 s1
+Deal Guppy Bot: o12 i9 i13 i3 c12 i11 s11 * s12 c13 s2 c6 c13 o2
 
-1. Bo opens 46: +[c1 c2 c3 c4] +[c12 s12 *] !? {Bo: Big opening (46) that spends the wildcard on turn 1 — but every 30+ opening from this rack needs it.} ( 1. Bo: +[c12 s12 *] {Bo: The other way to open: just this meld for 36, holding the coral run back to extend later.} )
-2. Guppy Bot draws c4
-3. Ada opens 71: +[c5 c6 c7 c8] +[s1 c1 o1] +[o9 * o11 o12]
-4. Bo draws i10
-5. Guppy Bot draws s13
-6. Ada: -[c12 s12 *] +[o12 c12 s12 *]
-7. Bo draws s13 (timeout) ? {Bo: Lost this turn to the clock while hunting for a rearrangement that was never there.}
-8. Guppy Bot opens 54: +[i13 c13 s13] +[s4 s5 s6]
-9. Ada draws i3
-10. Bo: -[s4 s5 s6] +[s4 s5 s6 s7]
-11. Guppy Bot: -[c5 c6 c7 c8] +[c4 c5 c6 c7 c8]
-12. Ada out: +[o3 c3 i3] {guppycube-review: {"rackValue":{"p1":0,"p2":72,"p3":60}}}
+1. Bo draws s13 s5 s1 (timeout) ? {Bo: Lost this turn to the clock while hunting for a rearrangement that was never there.}
+2. Guppy Bot opens 75: +[o12 c12 s12] +[i13 c13 *] !? {Guppy Bot: Big opening (75) that spends the wilcard on turn 2 — but every 30+ opening from this rack needs it.} ( 2. Guppy Bot: +[i13 c13 *] {Guppy Bot: The other way to open: just this set for 39, holding the coral run back to extend later.} )
+3. Ada opens 36: +[o7 o8 o9] +[c4 o4 i4]
+4. Bo draws i6
+5. Guppy Bot draws c7
+6. Ada draws s10
+7. Bo draws i8
+8. Guppy Bot draws s10
+9. Ada draws s11
+10. Bo draws i7
+11. Guppy Bot draws s3
+12. Ada draws c9
+13. Bo draws c6
+14. Guppy Bot draws c12
+15. Ada draws i7
+16. Bo draws c11
+17. Guppy Bot draws *
+18. Ada draws o13
+19. Bo draws i3
+20. Guppy Bot: +[* c12 c13]
+21. Ada: +[o11 o12 o13]
+22. Bo draws o2
+23. Guppy Bot draws s12
+24. Ada draws i11
+25. Bo draws c8
+26. Guppy Bot: +[s10 s11 s12]
+27. Ada draws c10
+28. Bo draws s7
+29. Guppy Bot draws o3
+30. Ada: -[* c12 c13] +[c9 c10 * c12 c13]
+31. Bo opens 61: +[s5 s6 s7 s8 s9] +[i5 i6 i7 i8]
+32. Guppy Bot: -[i5 i6 i7 i8] +[i5 i6 i7 i8 i9] +[i3 s3 o3]
+33. Ada: -[s5 s6 s7 s8 s9] -[i3 s3 o3] +[s5 s6 s7 s8 s9 s10 s11] +[c3 i3 s3 o3]
+34. Bo: -[o12 c12 s12] -[i13 c13 *] -[c9 c10 * c12 c13] -[s10 s11 s12] -[i5 i6 i7 i8 i9] +[i12 o12 c12 s12] +[s13 i13 c13 *] +[c8 c9 c10 * c12 c13] +[s9 s10 s11 s12 s13] +[i5 i6 i7 i8 i9 i10]
+35. Guppy Bot: -[c8 c9 c10 * c12 c13] -[i5 i6 i7 i8 i9 i10] +[c6 c7 c8 c9 c10 * c12 c13] +[i5 i6 i7 i8 i9 i10 i11]
+36. Ada draws s7
+37. Bo draws o6
+38. Guppy Bot draws i4
+39. Ada draws o8
+40. Bo: -[o7 o8 o9] +[o5 o6 o7 o8 o9]
+41. Guppy Bot: -[i5 i6 i7 i8 i9 i10 i11] +[i4 i5 i6 i7 i8 i9 i10 i11]
+42. Ada draws o9
+43. Bo: -[i4 i5 i6 i7 i8 i9 i10 i11] +[i3 i4 i5 i6 i7 i8 i9 i10 i11]
+44. Guppy Bot draws i2
+45. Ada draws o4
+46. Bo draws i8
+47. Guppy Bot out: +[s2 o2 i2] {guppycube-review: {"rackValue":{"p1":58,"p2":59,"p3":0}}}
 
-Left on rack Bo: i11 s10 i6 s1 o11 i10 i10 s13 (72)
-Left on rack Guppy Bot: o6 s11 c2 s11 o10 c7 o3 o1 i9 (60)
+Left on rack Bo: c2 c10 i5 i13 s1 s1 c6 c11 o2 i8 (59)
+Left on rack Ada: o1 c1 c3 c1 s6 i7 i11 s7 o8 o9 o4 (58)

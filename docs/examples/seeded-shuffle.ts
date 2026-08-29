@@ -1,5 +1,5 @@
 /**
- * Reference implementation of the "fy-sha256/1" seeded shuffle used by guppycube records.
+ * Reference implementation of the "fy-sha256-highest/1" seeded start used by guppycube records.
  * Runs anywhere WebCrypto exists: Cloudflare Workers, browsers, Bun, Node 20+.
  *
  *   block_k  = SHA-256(seed || uint32be(k))           k = 0, 1, 2, …
@@ -7,10 +7,12 @@
  *   below(n) = first word w with w < 2^32 - (2^32 mod n), reduced mod n   (rejection sampling)
  *   shuffle  = Fisher–Yates: for i = len-1 … 1: j = below(i+1); swap(a[i], a[j])
  *
- * A game start consumes one word stream for two shuffles, in this order:
- *   1. seating order: the seat ids in join order
- *   2. the pool: the canonical tile list (c1a c1b c2a … i13b *a *b)
- * then deals rackSize rounds, each seat in seating order taking pool.pop() (the last element).
+ * A game start consumes one word stream in this order:
+ *   1. shuffle the canonical tile list (c1a c1b c2a … i13b *a *b)
+ *   2. draw one tile per seat; retain only highest-tied seats and repeat, setting every draw aside
+ *   3. return all starter draws and reshuffle the full pool
+ * The winner goes first, with turn order rotating through join order. Dealing still runs in join
+ * order: rackSize rounds, each seat taking pool.pop() (the last element).
  * Every later draw is also pool.pop().
  */
 
@@ -74,13 +76,32 @@ export interface SeededStart {
   racks: Record<string, string[]>;
 }
 
+function tileNumber(tileId: string): number {
+  return tileId.startsWith("*") ? 0 : Number.parseInt(tileId.slice(1, -1), 10);
+}
+
+export function chooseStartingSeatIndex(playerCount: number, pool: string[]): number {
+  let candidates = Array.from({ length: playerCount }, (_, index) => index);
+  const drawn: string[] = [];
+  while (candidates.length > 1 && pool.length >= candidates.length) {
+    const picks = candidates.map((index) => ({ index, tileId: pool.pop()! }));
+    drawn.push(...picks.map(({ tileId }) => tileId));
+    const highest = Math.max(...picks.map(({ tileId }) => tileNumber(tileId)));
+    candidates = picks.filter(({ tileId }) => tileNumber(tileId) === highest).map(({ index }) => index);
+  }
+  pool.push(...drawn);
+  return candidates[0] ?? 0;
+}
+
 export async function seededStart(seed: Uint8Array, seatsInJoinOrder: string[], rackSize = 14): Promise<SeededStart> {
   const words = new SeededWords(seed);
-  const order = await fisherYates(seatsInJoinOrder, words);
-  const pool = await fisherYates(canonicalTiles(), words);
-  const racks: Record<string, string[]> = Object.fromEntries(order.map((seat) => [seat, []]));
+  let pool = await fisherYates(canonicalTiles(), words);
+  const first = chooseStartingSeatIndex(seatsInJoinOrder.length, pool);
+  pool = await fisherYates(pool, words);
+  const order = [...seatsInJoinOrder.slice(first), ...seatsInJoinOrder.slice(0, first)];
+  const racks: Record<string, string[]> = Object.fromEntries(seatsInJoinOrder.map((seat) => [seat, []]));
   for (let round = 0; round < rackSize; round += 1) {
-    for (const seat of order) {
+    for (const seat of seatsInJoinOrder) {
       const tile = pool.pop();
       if (tile) racks[seat]!.push(tile);
     }

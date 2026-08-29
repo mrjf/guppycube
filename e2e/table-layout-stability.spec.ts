@@ -16,7 +16,7 @@ interface Rect {
   height: number;
 }
 
-type LayoutSnapshot = Record<"tableSurface" | "tableTopline" | "poolCount" | "board", Rect>;
+type LayoutSnapshot = Record<"tableSurface" | "poolCount" | "board", Rect>;
 type LayoutShift = Record<keyof LayoutSnapshot, Rect>;
 
 async function getGameState(page: Page, roomCode: string): Promise<GameState> {
@@ -37,9 +37,8 @@ async function readLayout(page: Page): Promise<LayoutSnapshot> {
   return page.evaluate(() => {
     const selectors = {
       tableSurface: ".table-surface",
-      tableTopline: ".table-topline",
       poolCount: ".pool-count",
-      board: ".melds",
+      board: ".sets",
     } as const;
 
     return Object.fromEntries(Object.entries(selectors).map(([name, selector]) => {
@@ -134,7 +133,7 @@ test("keeps only play content and the compact draw pile on the felt", async ({ p
   const tableSurface = page.locator(".table-surface");
   await expect(tableSurface.locator(":scope > *")).toHaveCount(2);
   await expect(tableSurface.locator(":scope > .pool-count")).toHaveCount(1);
-  await expect(tableSurface.locator(":scope > .melds")).toHaveCount(1);
+  await expect(tableSurface.locator(":scope > .sets")).toHaveCount(1);
   await expect(tableSurface.locator("h1, h2, h3, p, .table-summary, .table-drop-instruction, .table-turn-tools"))
     .toHaveCount(0);
   await expect(tableSurface.locator("button")).toHaveCount(1);

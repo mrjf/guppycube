@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://snagsby.com/guppycube/schemas/record-line-v1",
+  "$id": "https://snagsby.com/guppycube/schemas/record-line-v2",
   "title": "guppycube record line",
-  "description": "One line of a guppycube-record/1 file: either a server event (chained, sequenced) or an annotation.",
+  "description": "One line of a guppycube-record/2 file: either a server event (chained, sequenced) or an annotation.",
   "oneOf": [
     {
       "$ref": "#/$defs/serverEvent"
@@ -15,9 +15,9 @@
     "tileId": {
       "type": "string",
       "pattern": "^([csoi](1[0-3]|[1-9])|\\*)[ab]$",
-      "description": "Exact tile id: color letter (c s o i) + number + copy letter, or *a / *b for the wildcards."
+      "description": "Exact tile id: color letter (c s o i) + number + copy letter, or *a / *b for the wilcards."
     },
-    "meld": {
+    "set": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/tileId"
@@ -28,7 +28,7 @@
     "board": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/meld"
+        "$ref": "#/$defs/set"
       },
       "maxItems": 106
     },
@@ -48,7 +48,7 @@
       "enum": [
         "no-move-alert",
         "auto-draw",
-        "rack-meld-highlights"
+        "rack-set-highlights"
       ]
     },
     "assistPolicy": {
@@ -144,7 +144,7 @@
           "const": "game"
         },
         "format": {
-          "const": "guppycube-record/1"
+          "const": "guppycube-record/2"
         },
         "record": {
           "type": "object",
@@ -198,10 +198,10 @@
             "colors",
             "numbers",
             "copies",
-            "wildcards",
+            "wilcards",
             "rackSize",
             "openingMinimum",
-            "wildcardPenalty",
+            "wilcardPenalty",
             "turnMs"
           ],
           "properties": {
@@ -225,7 +225,7 @@
               "type": "integer",
               "minimum": 1
             },
-            "wildcards": {
+            "wilcards": {
               "type": "integer",
               "minimum": 0
             },
@@ -237,7 +237,7 @@
               "type": "integer",
               "minimum": 0
             },
-            "wildcardPenalty": {
+            "wilcardPenalty": {
               "type": "integer",
               "minimum": 0
             },
@@ -297,7 +297,7 @@
               "pattern": "^[a-z0-9-]+/[0-9]+\\.[0-9]+\\.[0-9]+$"
             },
             "shuffle": {
-              "const": "fy-sha256/1"
+              "const": "fy-sha256-highest/1"
             }
           }
         }
@@ -578,22 +578,103 @@
             "drew": {
               "enum": [
                 0,
-                1
+                1,
+                2,
+                3
               ]
             },
-            "private": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "tile"
-              ],
+            "private": true
+          },
+          "oneOf": [
+            {
               "properties": {
-                "tile": {
-                  "$ref": "#/$defs/tileId"
+                "drew": {
+                  "const": 0
+                }
+              },
+              "not": {
+                "properties": {
+                  "private": true
+                },
+                "required": [
+                  "private"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "drew": {
+                  "const": 1
+                },
+                "private": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "tile"
+                  ],
+                  "properties": {
+                    "tile": {
+                      "$ref": "#/$defs/tileId"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "reason": {
+                  "const": "timeout"
+                },
+                "drew": {
+                  "const": 2
+                },
+                "private": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "tiles"
+                  ],
+                  "properties": {
+                    "tiles": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/tileId"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "reason": {
+                  "const": "timeout"
+                },
+                "drew": {
+                  "const": 3
+                },
+                "private": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "tiles"
+                  ],
+                  "properties": {
+                    "tiles": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/tileId"
+                      },
+                      "minItems": 3,
+                      "maxItems": 3
+                    }
+                  }
                 }
               }
             }
-          }
+          ]
         }
       ]
     },
@@ -704,7 +785,7 @@
           "pattern": "^[0-9a-f]{64}$"
         },
         "algorithm": {
-          "const": "fy-sha256/1"
+          "const": "fy-sha256-highest/1"
         },
         "unlock": {
           "type": "object",

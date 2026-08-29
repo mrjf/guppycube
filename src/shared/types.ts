@@ -5,7 +5,7 @@ export {
   TILE_NUMBER_MAX,
   TILE_NUMBER_MIN,
   TILE_SET_SIZE,
-  WILDCARD_TILE_COUNT,
+  WILCARD_TILE_COUNT,
 } from "../schemas";
 export { ASSIST_DEFINITIONS, ASSIST_IDS, ASSIST_POLICIES } from "./assists";
 export type {
@@ -21,7 +21,7 @@ export type {
   GameSession,
   GameMode,
   GameStatus,
-  Meld,
+  GameSet,
   PublicGameState,
   PublicPlayer,
   SaveTurnDraftInput,

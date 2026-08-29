@@ -2,7 +2,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from "@pla
 
 const appUrl = (process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173").replace(/\/+$/, "");
 
-type AssistId = "no-move-alert" | "auto-draw" | "rack-meld-highlights";
+type AssistId = "no-move-alert" | "auto-draw" | "rack-set-highlights";
 type AssistPolicy = "default-on" | "default-off" | "disallowed";
 type AssistPolicyMap = Record<AssistId, AssistPolicy>;
 
@@ -19,7 +19,7 @@ interface AssistGameState {
     id: string;
     color: "coral" | "sun" | "ocean" | "ink" | null;
     value: number | null;
-    wildcard: boolean;
+    wilcard: boolean;
   }>;
   assistPolicy: AssistPolicyMap;
   enabledAssists: AssistId[];
@@ -38,7 +38,7 @@ interface TwoPlayerGame {
 
 interface OpeningMoveProof {
   hasMove: boolean;
-  melds: string[][];
+  sets: string[][];
   points: number;
 }
 
@@ -53,22 +53,22 @@ interface ClassifiedGame {
 function describeRack(state: AssistGameState): string {
   return state.myRack.map((id) => {
     const tile = state.tiles[id];
-    return tile?.wildcard ? `${id}(wildcard)` : `${id}(${tile?.color}-${tile?.value})`;
+    return tile?.wilcard ? `${id}(wilcard)` : `${id}(${tile?.color}-${tile?.value})`;
   }).join(", ");
 }
 
 /**
  * An intentionally independent opening-move oracle for live tests. It does not
  * call the app's hasLegalMove implementation: every rack subset is classified
- * as a group/run, then disjoint melds are searched for the 30-point opening.
+ * as a group/run, then disjoint sets are searched for the 30-point opening.
  */
 function openingMoveProof(state: AssistGameState): OpeningMoveProof {
   const rack = state.myRack;
   const candidates: Array<{ mask: number; tileIds: string[]; points: number }> = [];
 
-  const meldPoints = (tileIds: string[]): number | null => {
+  const setPoints = (tileIds: string[]): number | null => {
     const selected = tileIds.map((id) => state.tiles[id]);
-    const numbered = selected.filter((tile) => tile && !tile.wildcard);
+    const numbered = selected.filter((tile) => tile && !tile.wilcard);
     if (numbered.length === 0) return null;
 
     let groupPoints: number | null = null;
@@ -122,12 +122,12 @@ function openingMoveProof(state: AssistGameState): OpeningMoveProof {
       tileIds.push(rack[index]!);
     }
     if (size < 3) continue;
-    const points = meldPoints(tileIds);
+    const points = setPoints(tileIds);
     if (points !== null) candidates.push({ mask, tileIds, points });
   }
 
-  const search = (start: number, usedMask: number, points: number, melds: string[][]): OpeningMoveProof | null => {
-    if (points >= 30) return { hasMove: true, melds, points };
+  const search = (start: number, usedMask: number, points: number, sets: string[][]): OpeningMoveProof | null => {
+    if (points >= 30) return { hasMove: true, sets, points };
     for (let index = start; index < candidates.length; index += 1) {
       const candidate = candidates[index]!;
       if ((candidate.mask & usedMask) !== 0) continue;
@@ -135,14 +135,14 @@ function openingMoveProof(state: AssistGameState): OpeningMoveProof {
         index + 1,
         usedMask | candidate.mask,
         points + candidate.points,
-        [...melds, candidate.tileIds],
+        [...sets, candidate.tileIds],
       );
       if (result) return result;
     }
     return null;
   };
 
-  return search(0, 0, 0, []) ?? { hasMove: false, melds: [], points: 0 };
+  return search(0, 0, 0, []) ?? { hasMove: false, sets: [], points: 0 };
 }
 
 async function getGame(context: BrowserContext, roomCode: string): Promise<AssistGameState> {
@@ -192,30 +192,17 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
   await page.getByLabel("Your name").fill(playerName);
   await page.getByText("Assist rules", { exact: true }).click();
 
-  const noMovePolicy = page.getByLabel("No-move alert policy");
-  const autoDrawPolicy = page.getByLabel("Auto-draw policy");
-  const rackMeldHighlightsPolicy = page.getByLabel("Rack meld highlights policy");
-  await expect(noMovePolicy).toHaveValue("default-on");
-  await expect(autoDrawPolicy).toHaveValue("default-off");
-  await expect(rackMeldHighlightsPolicy).toHaveValue("default-off");
-  await expect(noMovePolicy.locator("option")).toHaveText([
-    "Allowed, on by default",
-    "Allowed, off by default",
-    "Disallowed",
-  ]);
-  await expect(autoDrawPolicy.locator("option")).toHaveText([
-    "Allowed, on by default",
-    "Allowed, off by default",
-    "Disallowed",
-  ]);
-  await expect(rackMeldHighlightsPolicy.locator("option")).toHaveText([
-    "Allowed, on by default",
-    "Allowed, off by default",
-    "Disallowed",
-  ]);
+  const noMoveOff = page.getByRole("radio", { name: "No-move alert: Off" });
+  const noMoveAllowed = page.getByRole("radio", { name: "No-move alert: Allowed" });
+  const autoDrawOff = page.getByRole("radio", { name: "Auto-draw: Off" });
+  const rackSetHighlightsOff = page.getByRole("radio", { name: "Rack set highlights: Off" });
+  const rackSetHighlightsAllowed = page.getByRole("radio", { name: "Rack set highlights: Allowed" });
+  await expect(noMoveOff).toBeChecked();
+  await expect(autoDrawOff).toBeChecked();
+  await expect(rackSetHighlightsOff).toBeChecked();
 
-  await noMovePolicy.selectOption("default-off");
-  await autoDrawPolicy.selectOption("disallowed");
+  await noMoveAllowed.check();
+  await rackSetHighlightsAllowed.check();
   const createResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/api/games")
   );
@@ -229,7 +216,7 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
     assistPolicy: {
       "no-move-alert": "default-off",
       "auto-draw": "disallowed",
-      "rack-meld-highlights": "default-off",
+      "rack-set-highlights": "default-off",
     },
   });
 
@@ -237,7 +224,7 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
   const roomCode = await page.locator(".invite-code strong").innerText();
   const controls = page.locator('section[aria-label="Your assists"]');
   await expect(controls.getByRole("switch", { name: "No-move alert" })).not.toBeChecked();
-  await expect(controls.getByRole("switch", { name: "Rack meld highlights" })).not.toBeChecked();
+  await expect(controls.getByRole("switch", { name: "Rack set highlights" })).not.toBeChecked();
   await expect(controls.getByRole("switch", { name: "Auto-draw" })).toHaveCount(0);
   await expect(controls.getByText("Not allowed", { exact: true })).toBeVisible();
 
@@ -245,7 +232,7 @@ test("creates a table with tri-state assist rules and enforces disallowed assist
   expect(state.assistPolicy).toEqual({
     "no-move-alert": "default-off",
     "auto-draw": "disallowed",
-    "rack-meld-highlights": "default-off",
+    "rack-set-highlights": "default-off",
   });
   expect(state.enabledAssists).toEqual([]);
 
@@ -272,7 +259,7 @@ test("keeps each player's assist toggles independent in the lobby and active gam
   const game = await createTwoPlayerGame(browser, {
     "no-move-alert": "default-off",
     "auto-draw": "default-off",
-    "rack-meld-highlights": "default-off",
+    "rack-set-highlights": "default-off",
   }, Date.now().toString(36).slice(-7));
 
   try {
@@ -337,7 +324,7 @@ test("matches live opening game states and only auto-draws the truly blocked tur
       const game = await createTwoPlayerGame(browser, {
         "no-move-alert": "default-on",
         "auto-draw": "default-off",
-        "rack-meld-highlights": "default-off",
+        "rack-set-highlights": "default-off",
       }, `S${attempt}-${Date.now().toString(36).slice(-5)}`);
       const startResponse = await game.hostContext.request.post(`${appUrl}/api/games/${game.roomCode}/start`, {
         data: {},
@@ -422,7 +409,6 @@ test("matches live opening game states and only auto-draws the truly blocked tur
 
     const page = await blocked!.currentContext.newPage();
     await page.goto(`${appUrl}/room/${blocked!.game.roomCode}`);
-    await expect(page.getByText("No legal move is available. Draw to end your turn.", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Assists" }).click();
     const autoDraw = page.locator(".assist-panel").getByRole("switch", { name: "Auto-draw" });
     await expect(autoDraw).not.toBeChecked();

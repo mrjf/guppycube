@@ -5,19 +5,19 @@ export const ASSIST_DEFINITIONS = [
     id: "no-move-alert",
     label: "No-move alert",
     description: "Tell you when no legal play is available from your rack.",
-    defaultPolicy: "default-on",
+    defaultPolicy: "disallowed",
   },
   {
     id: "auto-draw",
     label: "Auto-draw",
     description: "Draw and end your turn automatically when no legal play is available.",
-    defaultPolicy: "default-off",
+    defaultPolicy: "disallowed",
   },
   {
-    id: "rack-meld-highlights",
-    label: "Rack meld highlights",
+    id: "rack-set-highlights",
+    label: "Rack set highlights",
     description: "Underline complete runs and groups in your autosorted rack.",
-    defaultPolicy: "default-off",
+    defaultPolicy: "disallowed",
   },
 ] as const;
 

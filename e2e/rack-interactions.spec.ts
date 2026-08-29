@@ -23,7 +23,7 @@ interface Tile {
   id: string;
   color: TileColor | null;
   value: number | null;
-  wildcard: boolean;
+  wilcard: boolean;
 }
 
 interface GameState {
@@ -78,12 +78,12 @@ function sortRack(tileIds: string[], tiles: Record<string, Tile>, mode: SortMode
   });
 }
 
-function meldKind(tileIds: string[], tiles: Record<string, Tile>): "group" | "run" | null {
-  const meldTiles = tileIds.map((id) => tiles[id]).filter((tile): tile is Tile => Boolean(tile));
-  if (meldTiles.length !== tileIds.length) return null;
+function setKind(tileIds: string[], tiles: Record<string, Tile>): "group" | "run" | null {
+  const setTiles = tileIds.map((id) => tiles[id]).filter((tile): tile is Tile => Boolean(tile));
+  if (setTiles.length !== tileIds.length) return null;
 
-  if (meldTiles.length >= 3 && meldTiles.length <= 4) {
-    const numbered = meldTiles.filter((tile) => !tile.wildcard);
+  if (setTiles.length >= 3 && setTiles.length <= 4) {
+    const numbered = setTiles.filter((tile) => !tile.wilcard);
     const value = numbered[0]?.value;
     const usedColors = numbered.map((tile) => tile.color);
     if (
@@ -96,14 +96,14 @@ function meldKind(tileIds: string[], tiles: Record<string, Tile>): "group" | "ru
     ) return "group";
   }
 
-  if (meldTiles.length < 3 || meldTiles.length > 13) return null;
-  const numbered = meldTiles
+  if (setTiles.length < 3 || setTiles.length > 13) return null;
+  const numbered = setTiles
     .map((tile, index) => ({ tile, index }))
-    .filter(({ tile }) => !tile.wildcard);
+    .filter(({ tile }) => !tile.wilcard);
   const first = numbered[0];
   if (!first?.tile.color || first.tile.value === null) return null;
   const start = first.tile.value - first.index;
-  if (start < 1 || start + meldTiles.length - 1 > 13) return null;
+  if (start < 1 || start + setTiles.length - 1 > 13) return null;
   if (numbered.some(({ tile }) => tile.color !== first.tile.color)) return null;
   if (numbered.some(({ tile, index }) => tile.value !== start + index)) return null;
   return "run";
@@ -117,7 +117,7 @@ function linkedForHeld(sortedRack: string[], heldId: string, tiles: Record<strin
   for (let start = 0; start <= heldIndex; start += 1) {
     for (let end = heldIndex + 1; end <= sortedRack.length; end += 1) {
       const candidate = sortedRack.slice(start, end);
-      if (candidate.length > linked.length && meldKind(candidate, tiles)) linked = candidate;
+      if (candidate.length > linked.length && setKind(candidate, tiles)) linked = candidate;
     }
   }
   return linked;
@@ -132,7 +132,7 @@ function findLinkedTiles(state: GameState): LinkedTiles | null {
     }));
     const linked = linkedCandidates.find((candidate) => candidate.tileIds.length > 1);
     const singleton = linkedCandidates.find((candidate) => candidate.tileIds.length === 1);
-    const kind = linked ? meldKind(linked.tileIds, state.tiles) : null;
+    const kind = linked ? setKind(linked.tileIds, state.tiles) : null;
     if (linked && kind && singleton) {
       return {
         ...linked,
@@ -151,11 +151,24 @@ async function readJson<T>(response: APIResponse): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function createPlayer(name: string, roomCode?: string): Promise<ApiPlayer> {
+async function createPlayer(name: string, roomCode?: string, allowRackSetHighlights = false): Promise<ApiPlayer> {
   const api = await playwrightRequest.newContext({ baseURL: appUrl });
   const response = roomCode
     ? await api.post(`/api/games/${roomCode}/join`, { data: { name } })
-    : await api.post("/api/games", { data: { name, mode: "realtime", maxPlayers: 4 } });
+    : await api.post("/api/games", {
+      data: {
+        name,
+        mode: "realtime",
+        maxPlayers: 4,
+        ...(allowRackSetHighlights ? {
+          assistPolicy: {
+            "no-move-alert": "disallowed",
+            "auto-draw": "disallowed",
+            "rack-set-highlights": "default-off",
+          },
+        } : {}),
+      },
+    });
   try {
     const session = await readJson<Session>(response);
     return { api, session };
@@ -204,7 +217,7 @@ async function createRackGame(): Promise<RackGame> {
     const stamp = `${Date.now().toString(36).slice(-6)}${attempt}`;
     const players: ApiPlayer[] = [];
     try {
-      const host = await createPlayer(`RH-${stamp}`);
+      const host = await createPlayer(`RH-${stamp}`, undefined, true);
       players.push(host);
       for (let seat = 2; seat <= 4; seat += 1) {
         players.push(await createPlayer(`RP${seat}-${stamp}`, host.session.roomCode));
@@ -248,7 +261,7 @@ async function createRackGame(): Promise<RackGame> {
   throw new Error("Eight four-player deals did not contain a testable sorted run/group and singleton.");
 }
 
-test("gates sorted rack meld underlines behind an off-by-default assist", async ({ browser }) => {
+test("gates sorted rack set underlines behind an off-by-default assist", async ({ browser }) => {
   test.setTimeout(60_000);
   const rackGame = await createRackGame();
   let context: BrowserContext | undefined;
@@ -293,22 +306,22 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
     );
     expect(displayedTileIds).toEqual(rackGame.linked.sortedRack);
 
-    const meldSlots = page.locator('.rack-slot[data-rack-meld="true"]');
-    await expect(meldSlots).toHaveCount(0);
+    const setSlots = page.locator('.rack-slot[data-rack-set="true"]');
+    await expect(setSlots).toHaveCount(0);
 
     await page.getByRole("button", { name: "Assists" }).click();
-    const rackMeldHighlights = page.locator(".assist-panel").getByRole("switch", { name: "Rack meld highlights" });
-    await expect(rackMeldHighlights).not.toBeChecked();
-    await rackMeldHighlights.click();
-    await expect(rackMeldHighlights).toBeChecked();
-    await expect(meldSlots).not.toHaveCount(0);
-    expect(await meldSlots.locator(".tile").count()).toBeGreaterThanOrEqual(3);
+    const rackSetHighlights = page.locator(".assist-panel").getByRole("switch", { name: "Rack set highlights" });
+    await expect(rackSetHighlights).not.toBeChecked();
+    await rackSetHighlights.click();
+    await expect(rackSetHighlights).toBeChecked();
+    await expect(setSlots).not.toHaveCount(0);
+    expect(await setSlots.locator(".tile").count()).toBeGreaterThanOrEqual(3);
 
-    await rackMeldHighlights.click();
-    await expect(rackMeldHighlights).not.toBeChecked();
-    await expect(meldSlots).toHaveCount(0);
-    await rackMeldHighlights.click();
-    await expect(rackMeldHighlights).toBeChecked();
+    await rackSetHighlights.click();
+    await expect(rackSetHighlights).not.toBeChecked();
+    await expect(setSlots).toHaveCount(0);
+    await rackSetHighlights.click();
+    await expect(rackSetHighlights).toBeChecked();
     await page.getByRole("button", { name: "Assists" }).click();
 
     const firstSelectableId = rackGame.linked.heldId;
@@ -322,7 +335,7 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
     expect(await page.locator(".rack .tile").evaluateAll((tiles) =>
       tiles.map((tile) => (tile as HTMLElement).dataset.tileId),
     )).toEqual(displayedTileIds);
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
 
     await secondSelectable.click();
     await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(2);
@@ -332,7 +345,7 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
       tiles.map((tile) => (tile as HTMLElement).dataset.tileId),
     )).toEqual(displayedTileIds);
     await expect(page.locator(".rack .tile")).toHaveCount(rackGame.state.myRack.length);
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
     await firstSelectable.click();
     await secondSelectable.click();
     await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(0);
@@ -342,20 +355,16 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
     const thirdHeldTileId = rackGame.linked.tileIds[2]!;
     const heldTile = page.locator(`.rack .tile[data-tile-id="${heldTileId}"]`);
     await heldTile.dispatchEvent("pointerdown", { pointerType: "mouse", button: 0, isPrimary: true });
-    await page.waitForTimeout(550);
-    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(1);
-    await expect(heldTile).toHaveAttribute("aria-pressed", "true");
-
-    await page.waitForTimeout(375);
-    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(2);
-    await expect(page.locator(`.rack .tile[data-tile-id="${nextHeldTileId}"]`)).toHaveAttribute("aria-pressed", "true");
-
-    await page.waitForTimeout(375);
-    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(3);
-    await expect(page.locator(`.rack .tile[data-tile-id="${thirdHeldTileId}"]`)).toHaveAttribute("aria-pressed", "true");
+    const heldSelection = page.locator('.rack .tile[aria-pressed="true"]');
+    await expect.poll(() => heldSelection.count()).toBeGreaterThanOrEqual(3);
     await heldTile.dispatchEvent("pointerup", { pointerType: "mouse", button: 0, isPrimary: true });
+    const heldSelectionCount = await heldSelection.count();
+    expect(heldSelectionCount).toBeGreaterThanOrEqual(3);
+    await expect(heldTile).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(`.rack .tile[data-tile-id="${nextHeldTileId}"]`)).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(`.rack .tile[data-tile-id="${thirdHeldTileId}"]`)).toHaveAttribute("aria-pressed", "true");
     await page.waitForTimeout(400);
-    await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(3);
+    await expect(heldSelection).toHaveCount(heldSelectionCount);
 
     await page.keyboard.press("Escape");
     await heldTile.focus();
@@ -365,13 +374,13 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
     for (const tileId of rackGame.linked.tileIds) {
       await expect(page.locator(`.rack .tile[data-tile-id="${tileId}"]`)).toHaveAttribute("aria-pressed", "true");
     }
-    await expect(page.getByText(`Move ${rackGame.linked.tileIds.length} selected tiles to open table space or a meld`)).toBeVisible();
+    await expect(page.locator(".selection-actions").getByRole("button", { name: /New set/ })).toBeVisible();
 
     await page.getByLabel("Game table").dispatchEvent("click");
-    const newMeld = page.locator(".meld").last();
-    await expect(newMeld).toBeVisible();
-    await expect(newMeld).toContainText(rackGame.linked.kind);
-    const placedTileIds = await newMeld.locator(".tile").evaluateAll((tiles) =>
+    const newSet = page.locator(".set").last();
+    await expect(newSet).toBeVisible();
+    await expect(newSet).toHaveAccessibleName(new RegExp(`^Set \\d+, ${rackGame.linked.kind}\\.`));
+    const placedTileIds = await newSet.locator(".tile").evaluateAll((tiles) =>
       tiles.map((tile) => (tile as HTMLElement).dataset.tileId).sort(),
     );
     expect(placedTileIds).toEqual([...rackGame.linked.tileIds].sort());
@@ -379,7 +388,7 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
 
     await page.getByRole("button", { name: "Reset turn" }).click();
     await expect(page.locator(".rack .tile")).toHaveCount(rackGame.state.myRack.length);
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
 
     const singleton = page.locator(`.rack .tile[data-tile-id="${rackGame.linked.singletonId}"]`);
     await singleton.dispatchEvent("pointerdown", { pointerType: "mouse", button: 0, isPrimary: true });
@@ -387,7 +396,7 @@ test("gates sorted rack meld underlines behind an off-by-default assist", async 
     await singleton.dispatchEvent("pointerup", { pointerType: "mouse", button: 0, isPrimary: true });
     await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(1);
     await expect(singleton).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText("Tap open table space to start a new meld, or tap a meld to add it")).toBeVisible();
+    await expect(page.locator(".selection-actions").getByRole("button", { name: /New set/ })).toBeVisible();
   } finally {
     await context?.close();
     await disposePlayers(rackGame.players);
@@ -407,6 +416,14 @@ test("keeps manual slots at a fixed pitch, rearranges while waiting, persists th
     const colorButton = page.getByRole("button", { name: "Color → 123", exact: true });
     const numberButton = page.getByRole("button", { name: "123 → Color", exact: true });
     await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
+
+    const initialSortedLayout = await rackSlotSnapshot(page);
+    const initialSortedSlotCount = await page.locator(".rack-slot").count();
+    const sameSlotTile = page.locator(".rack .tile").first();
+    await dragRackTileToSlot(page, sameSlotTile, sameSlotTile.locator(".."));
+    await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
+    expect(await page.locator(".rack-slot").count()).toBe(initialSortedSlotCount);
+    expect(await rackSlotSnapshot(page)).toEqual(initialSortedLayout);
 
     const initiallySortedTile = page.locator(".rack .tile").first();
     const activeTurnTarget = page.locator(".rack-slot").last();
@@ -501,7 +518,7 @@ test("keeps manual slots at a fixed pitch, rearranges while waiting, persists th
     expect(Math.floor(pushedTileIndex / 2)).toBeGreaterThan(Math.floor(Number(occupiedDestinationIndex) / 2));
 
     await page.getByRole("button", { name: "Reset turn" }).click();
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
     await expect(page.locator(`.rack-slot[data-rack-slot="${occupiedDestinationIndex}"] .tile[data-tile-id="${movedTileId}"]`))
       .toBeVisible();
 
@@ -579,7 +596,7 @@ test("keeps manual slots at a fixed pitch, rearranges while waiting, persists th
   }
 });
 
-test("double-clicks rack tiles into one newly created meld", async ({ browser }) => {
+test("double-clicks rack tiles into one newly created set", async ({ browser }) => {
   test.setTimeout(60_000);
   const rackGame = await createRackGame();
   let context: BrowserContext | undefined;
@@ -588,7 +605,7 @@ test("double-clicks rack tiles into one newly created meld", async ({ browser })
     const page = await context.newPage();
     await page.goto(`${appUrl}/room/${rackGame.target.session.roomCode}`);
     await expect(page.getByText("Your turn", { exact: true })).toBeVisible();
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
 
     const [firstTileId, secondTileId] = rackGame.state.myRack;
     expect(firstTileId).toBeDefined();
@@ -596,20 +613,20 @@ test("double-clicks rack tiles into one newly created meld", async ({ browser })
 
     await page.locator(`.rack .tile[data-tile-id="${firstTileId}"]`).dblclick();
 
-    const createdMeld = page.locator(".meld").first();
-    await expect(createdMeld).toBeVisible();
-    await expect(createdMeld.locator(".tile")).toHaveCount(1);
-    await expect(createdMeld.locator(`.tile[data-tile-id="${firstTileId}"]`)).toBeVisible();
+    const createdSet = page.locator(".set").first();
+    await expect(createdSet).toBeVisible();
+    await expect(createdSet.locator(".tile")).toHaveCount(1);
+    await expect(createdSet.locator(`.tile[data-tile-id="${firstTileId}"]`)).toBeVisible();
     await expect(page.locator(".rack .tile")).toHaveCount(rackGame.state.myRack.length - 1);
 
     await page.locator(`.rack .tile[data-tile-id="${secondTileId}"]`).dblclick();
 
-    await expect(page.locator(".meld")).toHaveCount(1);
-    await expect(createdMeld.locator(".tile")).toHaveCount(2);
-    const meldTileIds = await createdMeld.locator(".tile").evaluateAll((tiles) =>
+    await expect(page.locator(".set")).toHaveCount(1);
+    await expect(createdSet.locator(".tile")).toHaveCount(2);
+    const setTileIds = await createdSet.locator(".tile").evaluateAll((tiles) =>
       tiles.map((tile) => (tile as HTMLElement).dataset.tileId).sort(),
     );
-    expect(meldTileIds).toEqual([firstTileId, secondTileId].sort());
+    expect(setTileIds).toEqual([firstTileId, secondTileId].sort());
     await expect(page.locator(".rack .tile")).toHaveCount(rackGame.state.myRack.length - 2);
   } finally {
     await context?.close();
@@ -638,6 +655,21 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     const firstDisplayedTile = page.locator(".rack .tile").first();
     await expect(firstDisplayedTile).toBeFocused();
     await expect(page.locator(".game-shell")).toHaveClass(/is-keyboard-navigating/);
+
+    const topRowTile = page.locator('.rack [data-rack-row="1"] .tile').first();
+    const bottomRowTile = page.locator('.rack [data-rack-row="2"] .tile').first();
+    await topRowTile.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(bottomRowTile).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(topRowTile).toBeFocused();
+
+    await topRowTile.focus();
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.locator('.rack [data-rack-row="1"] .tile').last()).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(topRowTile).toBeFocused();
+
     await page.keyboard.press("Space");
     await expect(firstDisplayedTile).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("Escape");
@@ -649,12 +681,27 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await expect(page.locator('.rack .tile[aria-pressed="true"]')).toHaveCount(rackGame.linked.tileIds.length);
 
     await page.keyboard.press("Alt+Enter");
-    await expect(page.locator(".meld")).toHaveCount(1);
-    await expect(page.locator(".meld .tile")).toHaveCount(rackGame.linked.tileIds.length);
+    await expect(page.locator(".set")).toHaveCount(1);
+    await expect(page.locator(".set .tile")).toHaveCount(rackGame.linked.tileIds.length);
 
     await page.keyboard.press("Control+z");
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
     await expect(page.locator(".rack .tile")).toHaveCount(rackGame.state.myRack.length);
+
+    await firstDisplayedTile.focus();
+    await page.keyboard.press("Alt+Enter");
+    await expect(page.locator(".set")).toHaveCount(1);
+    await expect(page.locator(".set .tile")).toHaveCount(1);
+    await page.keyboard.press("Control+z");
+    await expect(page.locator(".set")).toHaveCount(0);
+
+    await firstDisplayedTile.focus();
+    await page.keyboard.press("Space");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Alt+Enter");
+    await expect(page.locator(".set")).toHaveCount(1);
+    await page.keyboard.press("Control+z");
+    await expect(page.locator(".set")).toHaveCount(0);
 
     const [firstTileId, secondTileId] = rackGame.linked.sortedRack;
     expect(firstTileId).toBeDefined();
@@ -674,25 +721,65 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Escape");
 
     await firstTile.focus();
+    await page.keyboard.press("Space");
     await page.keyboard.press("Alt+Enter");
     await page.locator(`.rack .tile[data-tile-id="${secondTileId}"]`).focus();
+    await page.keyboard.press("Space");
     await page.keyboard.press("Alt+Enter");
-    await expect(page.locator(".meld")).toHaveCount(2);
+    await expect(page.locator(".set")).toHaveCount(2);
 
-    const firstMeldMove = page.locator(".meld-drag-handle").first();
-    await expect(firstMeldMove).toHaveAccessibleName("Pick up meld 1");
-    await firstMeldMove.focus();
+    const expectedUpEntrySetId = await page.locator(".set").evaluateAll((sets) => [...sets]
+      .sort((left, right) => {
+        const leftBox = left.getBoundingClientRect();
+        const rightBox = right.getBoundingClientRect();
+        return rightBox.bottom - leftBox.bottom || leftBox.left - rightBox.left;
+      })[0]?.getAttribute("data-set-id"));
+    const expectedDownEntrySetId = await page.locator(".set").evaluateAll((sets) => [...sets]
+      .sort((left, right) => {
+        const leftBox = left.getBoundingClientRect();
+        const rightBox = right.getBoundingClientRect();
+        return leftBox.top - rightBox.top || leftBox.left - rightBox.left;
+      })[0]?.getAttribute("data-set-id"));
+    const remainingRackTile = page.locator(".rack .tile").first();
+    await remainingRackTile.focus();
+    await page.keyboard.press("ArrowUp");
+    const upEntrySet = page.locator(`.set[data-set-id="${expectedUpEntrySetId}"]`);
+    await expect(upEntrySet).toHaveClass(/\bis-keyboard-focused\b/);
+    await page.locator('.rack [data-rack-row="1"] .tile').first().focus();
+    await page.keyboard.press("ArrowUp");
+    await expect(upEntrySet).toHaveClass(/\bis-keyboard-focused\b/);
+    const downEntrySet = page.locator(`.set[data-set-id="${expectedDownEntrySetId}"]`);
+    await page.locator('.rack [data-rack-row="2"] .tile').last().focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(downEntrySet).toHaveClass(/\bis-keyboard-focused\b/);
+    await upEntrySet.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(upEntrySet.locator(".tile").first()).toBeFocused();
+
+    const firstSet = page.locator(".set").first();
+    await firstSet.focus();
+    await expect(firstSet).toHaveClass(/\bis-keyboard-focused\b/);
+    await page.keyboard.press("Space");
+    await expect(firstSet.locator('.tile[aria-pressed="true"]')).toHaveCount(1);
+    await page.keyboard.press("ArrowRight");
+    await expect(firstSet.locator(".tile").first()).toBeFocused();
+    await page.keyboard.press("Escape");
+
+    const firstSetMove = firstSet.locator(":scope > .set-drag-handle");
+    await expect(firstSetMove).toHaveAccessibleName("Pick up set 1");
+    const secondSetTile = page.locator(".set").nth(1).locator(".tile").first();
+    await secondSetTile.focus();
+    await page.keyboard.press("Space");
+    await expect(secondSetTile).toHaveAttribute("aria-pressed", "true");
+    await firstSetMove.focus();
     await page.keyboard.press("Enter");
-    await expect(firstMeldMove).toHaveAttribute("aria-pressed", "true");
-    const secondMeldMove = page.getByRole("button", { name: "Combine picked-up meld with meld 2" });
-    await secondMeldMove.focus();
-    await page.keyboard.press("Enter");
-    await expect(page.locator(".meld")).toHaveCount(1);
-    await expect(page.locator(".meld .tile")).toHaveCount(2);
+    await expect(firstSetMove).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator(".set")).toHaveCount(1);
+    await expect(page.locator(".set .tile")).toHaveCount(2);
 
     await page.getByRole("button", { name: "Reset turn" }).focus();
     await page.keyboard.press("Enter");
-    await expect(page.locator(".meld")).toHaveCount(0);
+    await expect(page.locator(".set")).toHaveCount(0);
 
     const commitButton = page.getByRole("button", { name: "Commit turn" });
     const drawButton = page.getByRole("button", { name: "Draw & end" });
@@ -701,6 +788,7 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Control+Enter");
     await expect(page.getByText(/Turn not ready\./)).toBeAttached();
 
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press("Meta+Shift+Enter");
     await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
   } finally {

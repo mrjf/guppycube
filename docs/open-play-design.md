@@ -18,7 +18,7 @@ The current implementation is closer to this than it looks. The honest audit:
 
 | Criterion | Today | Gap |
 | --- | --- | --- |
-| Any client can hit the server | JSON API + WebSocket, schema-validated both ways, no accounts. But auth is an `HttpOnly` cookie the server sets on create/join, the API rejects any request with a cross-origin `Origin`, and the WebSocket reads only the cookie. Schema catalog exists but is loopback-only. | Bearer tokens, CORS for token requests, WS auth via subprotocol, publish the catalog. |
+| Any client can hit the server | JSON API + WebSocket, schema-validated both ways, no accounts. Auth is an `HttpOnly` cookie for ordinary browser visits or a personal player link for portable browser handoff; the API rejects any request with a cross-origin `Origin`, and the WebSocket accepts either credential. Schema catalog exists but is loopback-only. | Bearer tokens, CORS for token requests, WS auth via subprotocol, publish the catalog. |
 | Own the gameplay data | The Durable Object stores full state, but "history" is 40 human-readable messages, not moves. Nothing is exportable; nothing is ever deleted. | Replace history with the event record, expose it, add retention and reveal policies, add sinks. |
 | No ads / third-party cookies | None. | — |
 | No third-party requests | `styles.css` imports DM Sans and Playfair Display from `fonts.googleapis.com` — every page load sends the visitor's IP to Google (an EU court has treated exactly this as a GDPR violation). | Self-host the two font files (both are OFL licensed). |
@@ -78,7 +78,7 @@ Independent of policy, rooms that never reach `end` expire: lobbies after 24 hou
 
 ### 3.5 A verifiable deal
 
-Today the shuffle uses `crypto.getRandomValues` directly, so nobody can check it. The record spec (§8) replaces it with a seeded shuffle: draw a 32-byte seed, publish its SHA-256 in the `start` event, derive seating and pool from it, reveal the seed at the end. The reference implementation is `docs/examples/seeded-shuffle.ts`; it is the same Fisher–Yates, with rejection sampling instead of the current `% (index + 1)` (which has a small modulo bias anyway). Cost: one `crypto.subtle.digest` per 8 random words.
+Today the shuffle uses `crypto.getRandomValues` directly, so nobody can check it. The record spec (§8) replaces it with a seeded start: draw a 32-byte seed, publish its SHA-256 in the `start` event, derive the highest-tile starter, turn order, deal, and pool from it, then reveal the seed at the end. The reference implementation is `docs/examples/seeded-shuffle.ts`; it uses Fisher–Yates with rejection sampling instead of the current `% (index + 1)` (which has a small modulo bias anyway). Cost: one `crypto.subtle.digest` per 8 random words.
 
 ### 3.6 Shared rules, published schemas
 
@@ -116,7 +116,7 @@ Third-party clients need three things from us, all cheap:
 3. **Server signatures.** Ed25519 over the head hash would let a player prove to a stranger that snagsby.com produced a record. It needs a secret, which the README currently promises the deployment has none of. Proposal: not in draft 1; the format leaves room.
 4. **Browser-side forwarding in our client.** It would need the token in page JavaScript. Proposal: keep the `HttpOnly` principle; server-side sinks cover the correspondence case, which is the one that needs it.
 5. **Retained records at a capability URL** make "share the replay" trivial but are the one case where we hold a finished game for months. Proposal: keep it opt-in (`keep`) and 90 days.
-6. **Name and extension.** `guppycube-record/1`, `<table>.guppycube.jsonl`, `application/x-ndjson`.
+6. **Name and extension.** `guppycube-record/2`, `<table>.guppycube.jsonl`, `application/x-ndjson`.
 
 ## 7. Build order
 

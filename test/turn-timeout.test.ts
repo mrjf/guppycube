@@ -1,11 +1,11 @@
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../src/server/game-room";
-import type { Meld, StoredGame } from "../src/schemas";
+import type { GameSet, StoredGame } from "../src/schemas";
 
 const hostToken = "timeout-host-token";
 const guestToken = "timeout-guest-token";
-const initialBoard: Meld[] = [{
+const initialBoard: GameSet[] = [{
   id: "coral-run",
   tileIds: ["coral-5-1", "coral-6-1", "coral-7-1"],
 }];
@@ -38,7 +38,7 @@ async function createTimeoutRoom(): Promise<{
     const guest = stored.players.find((player) => player.id === "guest");
     if (!host || !guest) throw new Error("Expected both timeout test players.");
 
-    const assigned = new Set([...initialBoard.flatMap((meld) => meld.tileIds), ...hostRack]);
+    const assigned = new Set([...initialBoard.flatMap((set) => set.tileIds), ...hostRack]);
     const remaining = Object.keys(stored.tiles).filter((tileId) => !assigned.has(tileId));
     host.rack = [...hostRack];
     host.opened = true;
@@ -98,9 +98,9 @@ describe("turn timeout resolution", () => {
     expect(after.history.at(-1)).toMatchObject({ kind: "timeout", playerId: "host" });
   });
 
-  it("accepts a valid in-progress board as if the player submitted it", async () => {
+  it("draws the three-tile incomplete-turn penalty for an in-progress board", async () => {
     const { room, turnStartedAt } = await createTimeoutRoom();
-    const proposedBoard: Meld[] = [{
+    const proposedBoard: GameSet[] = [{
       id: "extended-coral-run",
       tileIds: [...initialBoard[0]!.tileIds, "coral-8-1"],
     }];
@@ -122,18 +122,19 @@ describe("turn timeout resolution", () => {
     const after = await room.getPublicState("host", hostToken);
 
     expect(after.currentPlayerId).toBe("guest");
-    expect(after.board.map((meld) => meld.tileIds)).toEqual(proposedBoard.map((meld) => meld.tileIds));
-    expect(after.myRack).toEqual(["sun-1-1"]);
+    expect(after.board).toEqual(initialBoard);
+    expect(after.myRack).toHaveLength(before.myRack.length + 3);
+    expect(after.myRack).toEqual(expect.arrayContaining(hostRack));
     expect(after.myTurnDraft).toBeNull();
-    expect(after.poolCount).toBe(before.poolCount);
-    expect(after.history.at(-1)).toMatchObject({ kind: "played", playerId: "host" });
+    expect(after.poolCount).toBe(before.poolCount - 3);
+    expect(after.history.at(-1)).toMatchObject({ kind: "timeout", playerId: "host" });
   });
 
-  it("discards an invalid in-progress board and draws a tile", async () => {
+  it("discards an invalid in-progress board and draws the penalty", async () => {
     const { room, turnStartedAt } = await createTimeoutRoom();
-    const invalidBoard: Meld[] = [
+    const invalidBoard: GameSet[] = [
       ...initialBoard,
-      { id: "incomplete-meld", tileIds: ["sun-1-1"] },
+      { id: "incomplete-set", tileIds: ["sun-1-1"] },
     ];
     const before = await room.getPublicState("host", hostToken);
     expect(await room.saveTurnDraft("host", hostToken, {
@@ -148,17 +149,17 @@ describe("turn timeout resolution", () => {
 
     expect(after.currentPlayerId).toBe("guest");
     expect(after.board).toEqual(initialBoard);
-    expect(after.myRack).toHaveLength(before.myRack.length + 1);
+    expect(after.myRack).toHaveLength(before.myRack.length + 3);
     expect(after.myRack).toEqual(expect.arrayContaining(hostRack));
-    expect(after.poolCount).toBe(before.poolCount - 1);
+    expect(after.poolCount).toBe(before.poolCount - 3);
     expect(after.history.at(-1)).toMatchObject({ kind: "timeout", playerId: "host" });
   });
 
   it("does not let an older in-flight edit overwrite a later reset", async () => {
     const { room, turnStartedAt } = await createTimeoutRoom();
-    const staleBoard: Meld[] = [
+    const staleBoard: GameSet[] = [
       ...initialBoard,
-      { id: "stale-incomplete-meld", tileIds: ["sun-1-1"] },
+      { id: "stale-incomplete-set", tileIds: ["sun-1-1"] },
     ];
     expect(await room.saveTurnDraft("host", hostToken, {
       turnStartedAt,
@@ -181,7 +182,7 @@ describe("turn timeout resolution", () => {
     const after = await room.getPublicState("host", hostToken);
 
     expect(after.board).toEqual(initialBoard);
-    expect(after.myRack).toHaveLength(hostRack.length + 1);
+    expect(after.myRack).toHaveLength(hostRack.length + 3);
     expect(after.history.at(-1)).toMatchObject({ kind: "timeout", playerId: "host" });
   });
 });

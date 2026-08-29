@@ -161,8 +161,8 @@ test("streams repeated Guppy Bot turns into the human UI without a page refresh"
       await expect(opponent.locator(".mini-rack b"), {
         message: `the opponent rack count should match server state after Guppy Bot update ${updateNumber}`,
       }).toHaveText(String(computerAfter!.rackCount));
-      await expect(page.locator(".table-topline")).toContainText(
-        `${after.board.flatMap((meld) => meld.tileIds).length} tiles down`,
+      await expect(page.locator(".sets .tile")).toHaveCount(
+        after.board.flatMap((set) => set.tileIds).length,
       );
       await expect.poll(() => socketStates.some((state) =>
         state.version === after.version

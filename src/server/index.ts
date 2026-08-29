@@ -11,18 +11,28 @@ import type {
   ApiError,
   CreateGameInput,
   GameSession,
+  GameHistoryResponse,
   HealthResponse,
   OkResponse,
+  PlayerLink,
   RoomResult,
   SaveTurnDraftInput,
   SetAssistInput,
   SessionCredentials,
 } from "../schemas";
-import { decodeSessionCookie, encodeSessionCookie, sessionCookieName } from "../shared/session-cookie";
-import { normalizeTableName } from "../shared/table-name";
+import {
+  decodePlayerLink,
+  decodeSessionCookie,
+  decodeSessionCookies,
+  encodePlayerLink,
+  encodeSessionCookie,
+  sessionCookieName,
+} from "../shared/session-cookie";
+import { isTableName, normalizeTableName } from "../shared/table-name";
 import { describeValidationErrors, validators } from "../validation";
 import { GameRoom, hashToken } from "./game-room";
 import { makeTableName } from "./table-names";
+import { twimlResponse, verifyTwilioSignature } from "./twilio";
 
 export { GameRoom };
 
@@ -93,9 +103,7 @@ function checkedRoomResult(value: unknown): RoomResult {
 }
 
 function makeCredential(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return crypto.randomUUID();
 }
 
 function normalizeRoomCode(value: string): string {
@@ -105,6 +113,29 @@ function normalizeRoomCode(value: string): string {
 function cookieSession(request: Request, roomCode: string): SessionCredentials | undefined {
   const value = decodeSessionCookie(request.headers.get("Cookie") ?? "", roomCode);
   return validators.sessionCredentials(value) && value.roomCode === roomCode ? value : undefined;
+}
+
+function requestSession(request: Request, roomCode: string): SessionCredentials | undefined {
+  const value = decodePlayerLink(new URL(request.url).searchParams.get("player"), roomCode);
+  if (validators.sessionCredentials(value) && value.roomCode === roomCode) return value;
+  return cookieSession(request, roomCode);
+}
+
+function querySession(request: Request, roomCode: string): SessionCredentials | undefined {
+  const value = decodePlayerLink(new URL(request.url).searchParams.get("player"), roomCode);
+  return validators.sessionCredentials(value) && value.roomCode === roomCode ? value : undefined;
+}
+
+function sessionFromHistoryCookie(value: unknown): SessionCredentials | undefined {
+  return validators.sessionCredentials(value) ? value : undefined;
+}
+
+function portableLink(context: Context<AppEnv>, session: SessionCredentials): PlayerLink {
+  const requestUrl = new URL(context.req.url);
+  const base = context.req.raw.headers.get("X-Guppycube-Base") === deploymentBase ? deploymentBase : "";
+  const link = new URL(`${base}/room/${session.roomCode}`, requestUrl.origin);
+  link.searchParams.set("player", encodePlayerLink(session));
+  return { link: link.toString() };
 }
 
 function setSessionCookie(context: Context<AppEnv>, session: SessionCredentials): void {
@@ -143,6 +174,76 @@ function localTurnDurationOverride(request: Request): number | undefined {
   const value = Number(request.headers.get("X-Guppycube-Turn-Duration-Ms"));
   return Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
+
+function publicRequestUrl(request: Request): string {
+  const base = request.headers.get("X-Guppycube-Base");
+  if (!base) return request.url;
+  const url = new URL(request.url);
+  url.pathname = `${base.replace(/\/$/, "")}${url.pathname}`;
+  return url.toString();
+}
+
+type SmsCommand =
+  | { kind: "subscribe"; roomCode: string }
+  | { kind: "unsubscribe"; roomCode: string }
+  | { kind: "help" }
+  | { kind: "unknown" };
+
+function roomCodeFromSms(value: string): string | null {
+  let candidate = value.trim();
+  try {
+    const url = new URL(candidate);
+    const roomSegment = url.pathname.match(/\/room\/([^/]+)/)?.[1];
+    if (roomSegment) candidate = decodeURIComponent(roomSegment);
+  } catch {
+    // A bare table code is the normal form.
+  }
+  const roomCode = normalizeRoomCode(candidate);
+  return isTableName(roomCode) ? roomCode : null;
+}
+
+function parseSmsCommand(value: string): SmsCommand {
+  const body = value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+  if (body === "help" || body === "?") return { kind: "help" };
+
+  const match = body.match(/^(subscribe|follow|notify|unsubscribe|unsub|stop)(?:\s+me)?(?:\s+to)?(?:\s+(.+))?$/);
+  if (!match) return { kind: "unknown" };
+  const command = match[1];
+  const roomCode = match[2] ? roomCodeFromSms(match[2]) : null;
+  if (!roomCode) return { kind: "unknown" };
+  return {
+    kind: command === "unsubscribe" || command === "unsub" || command === "stop"
+      ? "unsubscribe"
+      : "subscribe",
+    roomCode,
+  };
+}
+
+const SMS_HELP = "Text SUBSCRIBE <table code> for turn alerts, or UNSUBSCRIBE <table code> to stop. Example: SUBSCRIBE dorky-puppet-spam";
+
+app.post("/api/twilio/sms", async (context) => {
+  const authToken = context.env.TWILIO_AUTH_TOKEN?.trim();
+  if (!authToken) return new Response("Twilio webhook is not configured.", { status: 503 });
+
+  const form = new URLSearchParams(await context.req.raw.text());
+  const signature = context.req.raw.headers.get("X-Twilio-Signature");
+  if (!(await verifyTwilioSignature(publicRequestUrl(context.req.raw), form, signature, authToken))) {
+    return new Response("Invalid Twilio signature.", { status: 403 });
+  }
+
+  const from = form.get("From") ?? "";
+  const command = parseSmsCommand(form.get("Body") ?? "");
+  if (command.kind === "help") return twimlResponse(SMS_HELP);
+  if (command.kind === "unknown") {
+    return twimlResponse(`I didn't understand that. ${SMS_HELP}`);
+  }
+
+  const room = context.env.GAME_ROOMS.getByName(command.roomCode);
+  const reply = command.kind === "subscribe"
+    ? await room.subscribeSms(from)
+    : await room.unsubscribeSms(from);
+  return twimlResponse(reply);
+});
 
 app.get("/api/health", (context) => {
   const body: HealthResponse = {
@@ -234,7 +335,7 @@ app.post("/api/games/:room/computers", async (context) => {
     return errorJson(context, 400, describeValidationErrors(validators.addComputerInput.errors), "invalid_computer");
   }
   const request = input satisfies AddComputerInput;
-  const identity = cookieSession(context.req.raw, roomCode);
+  const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   const result = checkedRoomResult(
     await context.env.GAME_ROOMS.getByName(roomCode).addComputer(identity.playerId, identity.token, request.strategy),
@@ -251,7 +352,7 @@ app.post("/api/games/:room/assists", async (context) => {
     return errorJson(context, 400, describeValidationErrors(validators.setAssistInput.errors), "invalid_assist");
   }
   const request = input satisfies SetAssistInput;
-  const identity = cookieSession(context.req.raw, roomCode);
+  const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   const result = checkedRoomResult(
     await context.env.GAME_ROOMS.getByName(roomCode).setAssist(
@@ -266,12 +367,64 @@ app.post("/api/games/:room/assists", async (context) => {
   return checkedJson(context, validators.okResponse, body);
 });
 
+app.get("/api/games/:room/link", async (context) => {
+  const roomCode = normalizeRoomCode(context.req.param("room"));
+  const identity = requestSession(context.req.raw, roomCode);
+  if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
+  try {
+    await context.env.GAME_ROOMS.getByName(roomCode).getPublicState(identity.playerId, identity.token);
+    if (querySession(context.req.raw, roomCode)) setSessionCookie(context, identity);
+    return checkedJson(context, validators.playerLink, portableLink(context, identity));
+  } catch (error) {
+    return errorJson(
+      context,
+      401,
+      error instanceof Error ? error.message : "Could not create that player link.",
+      "invalid_session",
+    );
+  }
+});
+
+app.get("/api/games/history", async (context) => {
+  const sessions = new Map<string, SessionCredentials>();
+  for (const value of decodeSessionCookies(context.req.raw.headers.get("Cookie") ?? "")) {
+    const session = sessionFromHistoryCookie(value);
+    if (session && !sessions.has(session.roomCode)) sessions.set(session.roomCode, session);
+  }
+
+  const games = (await Promise.all([...sessions.values()].map(async (session): Promise<GameHistoryResponse["games"][number] | null> => {
+    try {
+      const state = await context.env.GAME_ROOMS
+        .getByName(session.roomCode)
+        .getPublicState(session.playerId, session.token);
+      return {
+        id: state.id,
+        mode: state.mode,
+        status: state.status,
+        maxPlayers: state.maxPlayers,
+        createdAt: state.createdAt,
+        updatedAt: state.updatedAt,
+        players: state.players.map(({ name, isComputer }) => ({ name, isComputer })),
+        winnerName: state.winnerId === null
+          ? null
+          : state.players.find((player) => player.id === state.winnerId)?.name ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }))).filter((game): game is GameHistoryResponse["games"][number] => game !== null)
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+
+  return checkedJson(context, validators.gameHistoryResponse, { games });
+});
+
 app.get("/api/games/:room", async (context) => {
   const roomCode = normalizeRoomCode(context.req.param("room"));
-  const identity = cookieSession(context.req.raw, roomCode);
+  const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   try {
     const state = await context.env.GAME_ROOMS.getByName(roomCode).getPublicState(identity.playerId, identity.token);
+    if (querySession(context.req.raw, roomCode)) setSessionCookie(context, identity);
     return checkedJson(context, validators.publicGameState, state);
   } catch (error) {
     return errorJson(
@@ -289,7 +442,7 @@ app.post("/api/games/:room/start", async (context) => {
   if (!validators.startGameInput(input)) {
     return errorJson(context, 400, describeValidationErrors(validators.startGameInput.errors), "invalid_start");
   }
-  const identity = cookieSession(context.req.raw, roomCode);
+  const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   const result = checkedRoomResult(
     await context.env.GAME_ROOMS.getByName(roomCode).start(identity.playerId, identity.token),
@@ -305,7 +458,7 @@ app.post("/api/games/:room/action", async (context) => {
   if (!validators.takeActionInput(input)) {
     return errorJson(context, 400, describeValidationErrors(validators.takeActionInput.errors), "invalid_action");
   }
-  const identity = cookieSession(context.req.raw, roomCode);
+  const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   const result = checkedRoomResult(
     await context.env.GAME_ROOMS.getByName(roomCode).act(identity.playerId, identity.token, input.action),
@@ -322,7 +475,7 @@ app.put("/api/games/:room/draft", async (context) => {
     return errorJson(context, 400, describeValidationErrors(validators.saveTurnDraftInput.errors), "invalid_turn_draft");
   }
   const request = input satisfies SaveTurnDraftInput;
-  const identity = cookieSession(context.req.raw, roomCode);
+  const identity = requestSession(context.req.raw, roomCode);
   if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
   const result = checkedRoomResult(
     await context.env.GAME_ROOMS.getByName(roomCode).saveTurnDraft(identity.playerId, identity.token, request),

@@ -1,4 +1,4 @@
-"""Generate a legal sample game record (guppycube-record/1) with simple bots, plus annotations and a transcript."""
+"""Generate a legal sample game record (guppycube-record/2) with simple bots, plus annotations and a transcript."""
 from __future__ import annotations
 
 import hashlib
@@ -9,15 +9,15 @@ from collections import defaultdict
 
 from guppyrec import (
     COLORS, COLOR_NAMES, NUM_MIN, NUM_MAX, OPENING_MINIMUM, Prng, canonical_json, event_hash,
-    loose, parse_tile, project, rack_penalty, seeded_start, validate_meld, validate_turn,
+    loose, parse_tile, project, rack_penalty, seeded_start, validate_set, validate_turn,
 )
 
-SEED = hashlib.sha256(b"guppycube-sample-140").digest()
+SEED = hashlib.sha256(b"guppycube-sample-highest-16").digest()
 ORIGIN = "https://snagsby.com/guppycube"
 TABLE = "dorky-puppet-spam"
 RECORD_ID = "0b9f0a2e-6c1d-4f2a-9b7e-3d5c8a1f4e21"
 CREATED_AT = 1787427600000  # 2026-08-22 21:40:00 UTC
-TURN_MS = 120000
+TURN_MS = 60000
 
 SEATS = [
     {"id": "p1", "name": "Ada", "kind": "human", "host": True},
@@ -30,14 +30,14 @@ NAMES = {s["id"]: s["name"] for s in SEATS}
 
 # ---------- bot ----------
 
-def rack_meld_candidates(rack: list[str]):
-    """All valid melds formable from the rack (groups and runs, wildcards allowed)."""
+def rack_set_candidates(rack: list[str]):
+    """All valid sets formable from the rack (groups and runs, wilcards allowed)."""
     wilds = [t for t in rack if parse_tile(t).wild]
     numbered = [t for t in rack if not parse_tile(t).wild]
     seen = {}
 
     def add(ids):
-        v = validate_meld(ids)
+        v = validate_set(ids)
         if v is None:
             return
         key = tuple(sorted(ids))
@@ -92,7 +92,7 @@ def uses_wild(ids):
 
 
 def choose_disjoint(candidates, minimum_points=0):
-    """Greedy disjoint selection: prefer no-wildcard melds, then points."""
+    """Greedy disjoint selection: prefer no-wilcard sets, then points."""
     ordered = sorted(candidates, key=lambda c: (uses_wild(c[0]), -c[1], -len(c[0])))
     chosen, used, points = [], set(), 0
     for ids, pts in ordered:
@@ -107,7 +107,7 @@ def choose_disjoint(candidates, minimum_points=0):
 
 
 def extend_table(board, rack):
-    """Append single rack tiles to existing melds wherever legal (no wildcards spent this way)."""
+    """Append single rack tiles to existing sets wherever legal (no wilcards spent this way)."""
     board = [list(m) for m in board]
     rack = list(rack)
     changed = True
@@ -117,11 +117,11 @@ def extend_table(board, rack):
             if parse_tile(t).wild:
                 continue
             placed = False
-            for meld in board:
-                for pos in (0, len(meld)):
-                    trial = meld[:pos] + [t] + meld[pos:]
-                    if validate_meld(trial) is not None:
-                        meld[:] = trial
+            for set in board:
+                for pos in (0, len(set)):
+                    trial = set[:pos] + [t] + set[pos:]
+                    if validate_set(trial) is not None:
+                        set[:] = trial
                         placed = True
                         break
                 if placed:
@@ -135,13 +135,13 @@ def extend_table(board, rack):
 def bot_turn(board, rack, opened):
     """Returns ("play", new_board) or ("draw", None)."""
     if not opened:
-        melds, pts = choose_disjoint(rack_meld_candidates(rack), OPENING_MINIMUM)
-        if not melds:
+        sets, pts = choose_disjoint(rack_set_candidates(rack), OPENING_MINIMUM)
+        if not sets:
             return "draw", None
-        return "play", [list(m) for m in board] + melds
-    melds, _ = choose_disjoint(rack_meld_candidates(rack))
-    remaining = [t for t in rack if not any(t in m for m in melds)]
-    new_board = [list(m) for m in board] + melds
+        return "play", [list(m) for m in board] + sets
+    sets, _ = choose_disjoint(rack_set_candidates(rack))
+    remaining = [t for t in rack if not any(t in m for m in sets)]
+    new_board = [list(m) for m in board] + sets
     new_board, remaining = extend_table(new_board, remaining)
     if len(remaining) == len(rack):
         return "draw", None
@@ -166,26 +166,26 @@ def simulate():
 
     emit({
         "type": "game",
-        "format": "guppycube-record/1",
+        "format": "guppycube-record/2",
         "record": {"id": RECORD_ID, "table": TABLE, "origin": ORIGIN},
         "game": {"mode": "realtime", "maxSeats": 3},
         "rules": {
             "colors": [COLOR_NAMES[c] for c in COLORS],
             "numbers": [NUM_MIN, NUM_MAX],
             "copies": 2,
-            "wildcards": 2,
+            "wilcards": 2,
             "rackSize": 14,
             "openingMinimum": OPENING_MINIMUM,
-            "wildcardPenalty": 30,
+            "wilcardPenalty": 30,
             "turnMs": TURN_MS,
         },
         "policy": {
-            "assists": {"no-move-alert": "default-on", "auto-draw": "default-off", "rack-meld-highlights": "default-off"},
+            "assists": {"no-move-alert": "default-on", "auto-draw": "default-off", "rack-set-highlights": "default-off"},
             "reveal": "full",
             "retention": "minimal",
             "recordDrafts": False,
         },
-        "engine": {"rules": "guppycube-core/1.0.0", "shuffle": "fy-sha256/1"},
+        "engine": {"rules": "guppycube-core/2.0.0", "shuffle": "fy-sha256-highest/1"},
     })
     for i, s in enumerate(SEATS):
         at += [0, 41000, 52000][i]
@@ -194,10 +194,11 @@ def simulate():
             player["strategy"] = s["strategy"]
         emit({"type": "seat", "player": player, "host": s["host"]})
     at += 9000
-    emit({"type": "assist", "player": "p1", "assist": "rack-meld-highlights", "enabled": True})
+    emit({"type": "assist", "player": "p1", "assist": "rack-set-highlights", "enabled": True})
 
     at += 6000
-    order, pool, racks = seeded_start(SEED, [s["id"] for s in SEATS])
+    join_order = [s["id"] for s in SEATS]
+    order, pool, racks = seeded_start(SEED, join_order)
     emit({
         "type": "start",
         "order": order,
@@ -205,7 +206,7 @@ def simulate():
         "dealt": 14,
         "pool": len(pool),
     })
-    for p in order:
+    for p in join_order:
         emit({"type": "deal", "player": p, "count": 14}, private={"rack": list(racks[p])})
 
     opened = {p: False for p in order}
@@ -219,6 +220,10 @@ def simulate():
         p = order[turn % len(order)]
         turn += 1
         action, new_board = bot_turn(board, racks[p], opened[p])
+        force_timeout = p == "p2" and not forced_timeout_done
+        if force_timeout:
+            # The sample stages an incomplete draft (draft recording is off), then lets its clock expire.
+            action, new_board = "draw", None
         think = 4000 + timer.below(50000) if p not in COMPUTERS else 650
         if action == "play":
             ok, why, played, opening_points = validate_turn(board, new_board, racks[p], opened[p])
@@ -237,18 +242,20 @@ def simulate():
                 break
         else:
             turn_reason = "player"
-            if p == "p2" and not forced_timeout_done and turn > 6:
-                # Illustrate a timed-out turn: the clock ran out and the server drew for Bo.
+            if force_timeout:
+                # Illustrate a timed-out incomplete draft: it is discarded and Bo draws three.
                 turn_reason = "timeout"
                 forced_timeout_done = True
                 at += TURN_MS
             else:
                 at += think
             if pool:
-                tile = pool.pop()
-                racks[p].append(tile)
+                draw_count = 3 if turn_reason == "timeout" else 1
+                tiles = [pool.pop() for _ in range(min(draw_count, len(pool)))]
+                racks[p].extend(tiles)
                 empty_draws = 0
-                emit({"type": "turn", "n": turn, "player": p, "action": "draw", "reason": turn_reason, "drew": 1}, private={"tile": tile})
+                private = {"tile": tiles[0]} if len(tiles) == 1 else {"tiles": tiles}
+                emit({"type": "turn", "n": turn, "player": p, "action": "draw", "reason": turn_reason, "drew": len(tiles)}, private=private)
             else:
                 empty_draws += 1
                 emit({"type": "turn", "n": turn, "player": p, "action": "draw", "reason": turn_reason, "drew": 0})
@@ -284,7 +291,7 @@ def simulate():
 
     unlock = {str(e["seq"]): e["private"] for e in events if "private" in e}
     at += 50
-    emit({"type": "reveal", "seed": SEED.hex(), "algorithm": "fy-sha256/1", "unlock": unlock})
+    emit({"type": "reveal", "seed": SEED.hex(), "algorithm": "fy-sha256-highest/1", "unlock": unlock})
 
     # hash chain over public projections
     prev = None
@@ -304,26 +311,26 @@ def add_annotations(events):
     last_at = events[-1]["at"]
     base = last_at + 3_600_000
     out = []
-    # the first opening that laid more than one meld gets a quieter alternative line
+    # the first opening that laid more than one set gets a quieter alternative line
     board = []
     for e in turns:
         if e["action"] == "play" and "opening" in e:
             added = [m for m in e["board"] if all(t in set(e["played"]) for t in m)]
             if len(added) >= 2:
-                best = max(added, key=lambda m: validate_meld(m)[1])
-                pts = validate_meld(best)[1]
+                best = max(added, key=lambda m: validate_set(m)[1])
+                pts = validate_set(best)[1]
                 if pts >= OPENING_MINIMUM:
                     alt_board = [list(m) for m in board] + [best]
                     out.append({
                         "type": "note", "id": "n-4f2e91", "at": base, "by": {"name": NAMES[e["player"]]},
                         "on": {"n": e["n"]},
                         "marks": ["!?"],
-                        "text": f"Big opening ({e['opening']['points']}) that spends the wildcard on turn 1 — but every 30+ opening from this rack needs it.",
+                        "text": f"Big opening ({e['opening']['points']}) that spends the wilcard on turn {e['n']} — but every 30+ opening from this rack needs it.",
                     })
                     out.append({
                         "type": "line", "id": "l-c31d5a", "at": base + 120_000, "by": {"name": NAMES[e["player"]]},
                         "on": {"n": e["n"]},
-                        "text": f"The other way to open: just this meld for {pts}, holding the coral run back to extend later.",
+                        "text": f"The other way to open: just this set for {pts}, holding the coral run back to extend later.",
                         "moves": [{"player": e["player"], "action": "play", "board": alt_board}],
                     })
                     break
@@ -343,15 +350,15 @@ def add_annotations(events):
     })
     out.append({
         "type": "note", "id": "n-b02e44", "at": base + 240_000, "by": {"name": "Ada"},
-        "text": "Short one. Worth replaying for the wildcard group on turn 1.",
+        "text": "Worth replaying for the opening wilcard group.",
     })
     return out
 
 
 # ---------- transcript ----------
 
-def meld_text(meld):
-    return "[" + " ".join(loose(t) for t in meld) + "]"
+def set_text(set):
+    return "[" + " ".join(loose(t) for t in set) + "]"
 
 
 def board_delta(prev, new):
@@ -408,7 +415,7 @@ def transcript(events, annotations):
 
     def delta_text(before, after):
         removed, added = board_delta(before, after)
-        return " ".join(["-" + meld_text(m) for m in removed] + ["+" + meld_text(m) for m in added])
+        return " ".join(["-" + set_text(m) for m in removed] + ["+" + set_text(m) for m in added])
 
     board = []
     for e in events:
@@ -419,7 +426,8 @@ def transcript(events, annotations):
         if e["action"] == "draw":
             verb = "passes" if e["drew"] == 0 else "draws"
             if "private" in e:
-                verb += " " + loose(e["private"]["tile"])
+                drawn = [e["private"]["tile"]] if e["drew"] == 1 else e["private"]["tiles"]
+                verb += " " + " ".join(loose(tile) for tile in drawn)
             if e["reason"] == "timeout":
                 verb += " (timeout)"
             elif e["reason"] == "auto-draw":

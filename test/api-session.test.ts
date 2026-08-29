@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 import { app } from "../src/server";
+import { decodeSessionCookie } from "../src/shared/session-cookie";
 
 function gameRequest(path: string, init?: RequestInit): Promise<Response> {
   return app.request(`http://127.0.0.1${path}`, init, env);
@@ -61,6 +62,66 @@ describe("cookie-authenticated game API", () => {
       body: JSON.stringify({ playerId: "player-1", action: { type: "draw" } }),
     });
     expect(action.status).toBe(400);
+  });
+
+  test("authenticates a portable player link without a cookie", async () => {
+    const create = await gameRequest("/api/games", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "Portable Host", mode: "realtime", maxPlayers: 2 }),
+    });
+    const session = await create.json<{ roomCode: string }>();
+    const cookie = create.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+    const credentials = decodeSessionCookie(cookie, session.roomCode) as {
+      playerId: string;
+      token: string;
+    };
+    const player = `${credentials.playerId}.${credentials.token}`;
+
+    const portableState = await gameRequest(
+      `/api/games/${session.roomCode}?player=${encodeURIComponent(player)}`,
+    );
+    expect(portableState.status).toBe(200);
+    expect(portableState.headers.get("Set-Cookie")).toContain(`guppycube_session_${session.roomCode}=`);
+    await expect(portableState.json()).resolves.toEqual(expect.objectContaining({
+      myPlayerId: credentials.playerId,
+    }));
+
+    const linkResponse = await gameRequest(
+      `/api/games/${session.roomCode}/link?player=${encodeURIComponent(player)}`,
+    );
+    expect(linkResponse.status).toBe(200);
+    const link = await linkResponse.json<{ link: string }>();
+    expect(new URL(link.link).searchParams.get("player")).toBe(player);
+  });
+
+  test("lists every room identified by the browser's session cookies", async () => {
+    const first = await gameRequest("/api/games", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "History Host", mode: "realtime", maxPlayers: 2 }),
+    });
+    const firstSession = await first.json<{ roomCode: string }>();
+    const firstCookie = first.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+
+    const second = await gameRequest("/api/games", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "History Host Two", mode: "correspondence", maxPlayers: 3 }),
+    });
+    const secondSession = await second.json<{ roomCode: string }>();
+    const secondCookie = second.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+
+    const history = await gameRequest("/api/games/history", {
+      headers: { Cookie: `${firstCookie}; ${secondCookie}` },
+    });
+    expect(history.status).toBe(200);
+    await expect(history.json()).resolves.toEqual({
+      games: expect.arrayContaining([
+        expect.objectContaining({ id: firstSession.roomCode, status: "lobby", players: [{ name: "History Host", isComputer: false }] }),
+        expect.objectContaining({ id: secondSession.roomCode, status: "lobby", players: [{ name: "History Host Two", isComputer: false }] }),
+      ]),
+    });
   });
 
   test("rejects cross-origin browser requests", async () => {

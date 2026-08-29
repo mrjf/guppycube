@@ -6,7 +6,9 @@ const appBasePath = new URL(appUrl).pathname.replace(/\/+$/, "");
 const tableNamePattern = "[a-z]+-[a-z]+-[a-z]+";
 
 test("registers Guppycube with the Dev Hub and shows it on the dashboard", async ({ page, request }) => {
-  const projectsResponse = await request.get(`${hubUrl}/api/projects`);
+  const projectsResponse = await request.get(`${hubUrl}/api/projects`).catch(() => null);
+  test.skip(projectsResponse === null, "The optional local Dev Hub is not running.");
+  if (!projectsResponse) return;
   expect(projectsResponse.ok()).toBe(true);
 
   const payload = await projectsResponse.json() as {
@@ -111,11 +113,11 @@ test("exposes a searchable schema inventory and its validated API catalog", asyn
     schema: expect.objectContaining({
       properties: expect.objectContaining({
         assistPolicy: expect.objectContaining({
-          required: ["no-move-alert", "auto-draw", "rack-meld-highlights"],
+          required: ["no-move-alert", "auto-draw", "rack-set-highlights"],
           properties: {
             "no-move-alert": { enum: ["default-on", "default-off", "disallowed"] },
             "auto-draw": { enum: ["default-on", "default-off", "disallowed"] },
-            "rack-meld-highlights": { enum: ["default-on", "default-off", "disallowed"] },
+            "rack-set-highlights": { enum: ["default-on", "default-off", "disallowed"] },
           },
         }),
       }),
@@ -127,7 +129,7 @@ test("exposes a searchable schema inventory and its validated API catalog", asyn
     schemaId: "https://guppycube.local/schemas/set-assist-input",
     schema: expect.objectContaining({
       properties: expect.objectContaining({
-        assistId: { enum: ["no-move-alert", "auto-draw", "rack-meld-highlights"] },
+        assistId: { enum: ["no-move-alert", "auto-draw", "rack-set-highlights"] },
         enabled: { type: "boolean" },
       }),
     }),
@@ -260,7 +262,7 @@ test("opens an invite without a cookie, joins it, and rejects a legacy six-chara
       assistPolicy: {
         "no-move-alert": "default-on",
         "auto-draw": "default-off",
-        "rack-meld-highlights": "default-off",
+        "rack-set-highlights": "default-off",
       },
     },
   });
