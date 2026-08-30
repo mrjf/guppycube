@@ -664,12 +664,23 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("ArrowUp");
     await expect(topRowTile).toBeFocused();
 
-    await topRowTile.focus();
-    await page.keyboard.press("ArrowLeft");
-    await expect(page.locator('.rack [data-rack-row="1"] .tile').last()).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(topRowTile).toBeFocused();
+    const rackRows = page.locator(".rack-level");
+    for (let rowIndex = 0; rowIndex < await rackRows.count(); rowIndex += 1) {
+      const rowTiles = rackRows.nth(rowIndex).locator(".tile");
+      expect(await rowTiles.count()).toBeGreaterThan(1);
+      await rowTiles.first().focus();
+      await page.keyboard.press("ArrowLeft");
+      await expect(rowTiles.last()).toBeFocused();
+      await page.keyboard.press("ArrowRight");
+      await expect(rowTiles.first()).toBeFocused();
+      await rowTiles.last().focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(rowTiles.first()).toBeFocused();
+      await page.keyboard.press("ArrowLeft");
+      await expect(rowTiles.last()).toBeFocused();
+    }
 
+    await firstDisplayedTile.focus();
     await page.keyboard.press("Space");
     await expect(firstDisplayedTile).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("Escape");
@@ -727,6 +738,83 @@ test("supports a complete keyboard turn workflow", async ({ browser }) => {
     await page.keyboard.press("Space");
     await page.keyboard.press("Alt+Enter");
     await expect(page.locator(".set")).toHaveCount(2);
+
+    for (let setCount = 2; setCount < 8; setCount += 1) {
+      await page.locator(".rack .tile").first().focus();
+      await page.keyboard.press("Alt+Enter");
+      await expect(page.locator(".set")).toHaveCount(setCount + 1);
+    }
+    const feltRows = await page.locator(".set").evaluateAll((sets) => {
+      const rows = new Map<number, HTMLElement[]>();
+      for (const element of sets) {
+        const set = element as HTMLElement;
+        const row = Number.parseInt(set.dataset.feltRow ?? "", 10);
+        rows.set(row, [...(rows.get(row) ?? []), set]);
+      }
+      return [...rows.entries()]
+        .sort(([leftRow], [rightRow]) => leftRow - rightRow)
+        .map(([row, rowSets]) => ({
+          row,
+          setIds: rowSets
+            .sort((left, right) => left.getBoundingClientRect().left - right.getBoundingClientRect().left)
+            .map((set) => set.dataset.setId ?? ""),
+        }));
+    });
+    for (const { row, setIds } of feltRows) {
+      expect(setIds).not.toContain("");
+      expect(setIds.length, `felt row ${row} should exercise a multi-set wrap`).toBeGreaterThan(1);
+      const firstSet = page.locator(`.set[data-set-id="${setIds[0]}"]`);
+      const lastSet = page.locator(`.set[data-set-id="${setIds.at(-1)}"]`);
+      const firstTile = firstSet.locator(".tile").first();
+      const lastTile = lastSet.locator(".tile").last();
+
+      await firstTile.focus();
+      await page.keyboard.press("ArrowLeft");
+      await expect(lastTile).toBeFocused();
+      await page.keyboard.press("ArrowRight");
+      await expect(firstTile).toBeFocused();
+      await lastTile.focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(firstTile).toBeFocused();
+      await page.keyboard.press("ArrowLeft");
+      await expect(lastTile).toBeFocused();
+
+      for (let setIndex = 0; setIndex < setIds.length - 1; setIndex += 1) {
+        const leftSet = page.locator(`.set[data-set-id="${setIds[setIndex]}"]`);
+        const rightSet = page.locator(`.set[data-set-id="${setIds[setIndex + 1]}"]`);
+        const leftTile = leftSet.locator(".tile").last();
+        const rightTile = rightSet.locator(".tile").first();
+        await leftTile.focus();
+        await page.keyboard.press("ArrowRight");
+        await expect(rightTile).toBeFocused();
+        await page.keyboard.press("ArrowLeft");
+        await expect(leftTile).toBeFocused();
+      }
+
+      await firstSet.focus();
+      await page.keyboard.press("Shift+ArrowLeft");
+      await expect(lastSet).toBeFocused();
+      await page.keyboard.press("Shift+ArrowRight");
+      await expect(firstSet).toBeFocused();
+    }
+
+    const bottomFeltRow = feltRows.at(-1)?.row;
+    expect(bottomFeltRow).toBeDefined();
+    const bottomRowSets = page.locator(`.set[data-felt-row="${bottomFeltRow}"]`);
+    const rackEntryTile = page.locator(".rack .tile").first();
+    for (let index = 0; index < await bottomRowSets.count(); index += 1) {
+      const set = bottomRowSets.nth(index);
+      await set.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(rackEntryTile).toBeFocused();
+      await set.locator(".tile").first().focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(rackEntryTile).toBeFocused();
+    }
+    for (let setCount = 8; setCount > 2; setCount -= 1) {
+      await page.keyboard.press("Control+z");
+      await expect(page.locator(".set")).toHaveCount(setCount - 1);
+    }
 
     const expectedUpEntrySetId = await page.locator(".set").evaluateAll((sets) => [...sets]
       .sort((left, right) => {

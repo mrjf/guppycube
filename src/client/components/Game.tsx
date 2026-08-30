@@ -203,13 +203,13 @@ function horizontalSetSequenceTarget(
     return previousSet ? tileButtons(previousSet).at(-1) ?? previousSet : null;
   }
 
-  const tileIndex = setTiles.indexOf(current as HTMLButtonElement);
+  const rowTiles = row.flatMap((set) => tileButtons(set));
+  const tileIndex = rowTiles.indexOf(current as HTMLButtonElement);
   if (tileIndex < 0) return null;
-  if (key === "ArrowLeft") return tileIndex > 0 ? setTiles[tileIndex - 1] ?? currentSet : currentSet;
-
-  if (tileIndex < setTiles.length - 1) return setTiles[tileIndex + 1] ?? currentSet;
-  const nextSet = row[(setIndex + 1) % row.length];
-  return nextSet ?? currentSet;
+  const nextIndex = key === "ArrowLeft"
+    ? (tileIndex - 1 + rowTiles.length) % rowTiles.length
+    : (tileIndex + 1) % rowTiles.length;
+  return rowTiles[nextIndex] ?? null;
 }
 
 function verticalWrapTarget(
@@ -226,7 +226,9 @@ function verticalWrapTarget(
 
   if (currentSet && feltSets.length > 0) {
     const edgeSet = key === "ArrowUp" ? feltSets[0] : feltSets.at(-1);
-    if (currentSet === edgeSet) {
+    const currentRow = currentSet.dataset.feltRow;
+    const edgeRow = edgeSet?.dataset.feltRow;
+    if (currentRow && currentRow === edgeRow) {
       return key === "ArrowUp" ? rack.at(-1) ?? null : rack[0] ?? null;
     }
   }
