@@ -2,7 +2,81 @@ import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } fr
 import { describe, expect, it } from "vitest";
 import { chooseStartingPlayerIndex, hashToken } from "../src/server/game-room";
 import { createTileSet } from "../src/shared/rules";
-import type { StoredGame } from "../src/schemas";
+import type { GameSet, StoredGame } from "../src/schemas";
+
+const preMoveBoard: GameSet[] = [{
+  id: "pre-move-run",
+  tileIds: ["coral-5-1", "coral-6-1", "coral-7-1", "coral-8-1"],
+}, {
+  id: "untouched-run",
+  tileIds: ["sun-5-1", "sun-6-1", "sun-7-1"],
+}];
+
+async function createPreMoveRoom() {
+  const roomCode = `P${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
+  const hostToken = "host-pre-move-token";
+  const guestToken = "guest-pre-move-token";
+  const room = env.GAME_ROOMS.getByName(roomCode);
+  expect(await room.create(
+    roomCode,
+    { name: "Ada", mode: "realtime", maxPlayers: 2 },
+    "host",
+    await hashToken(hostToken),
+  )).toEqual({ ok: true });
+  expect(await room.join("Grace", "guest", await hashToken(guestToken))).toEqual({ ok: true });
+  expect(await room.start("host", hostToken)).toEqual({ ok: true });
+
+  const turnStartedAt = Date.now();
+  await runInDurableObject(room, (_instance, state) => {
+    const row = state.storage.sql.exec<{ json: string }>(
+      "SELECT json FROM game_state WHERE singleton = 1",
+    ).one();
+    const stored = JSON.parse(row.json) as StoredGame;
+    const host = stored.players.find((player) => player.id === "host");
+    const guest = stored.players.find((player) => player.id === "guest");
+    if (!host || !guest) throw new Error("Expected both pre-move test players.");
+
+    const baseBoard: GameSet[] = [{
+      id: "base-run",
+      tileIds: ["coral-5-1", "coral-6-1", "coral-7-1"],
+    }, {
+      id: "base-sun-run",
+      tileIds: ["sun-5-1", "sun-6-1", "sun-7-1"],
+    }];
+    const assigned = new Set([
+      ...baseBoard.flatMap((set) => set.tileIds),
+      "coral-4-1",
+      "coral-8-1",
+      "ink-1-1",
+      "sun-4-1",
+      "sun-1-1",
+    ]);
+    const remaining = Object.keys(stored.tiles).filter((tileId) => !assigned.has(tileId));
+    host.rack = ["coral-4-1", "sun-4-1", "sun-1-1"];
+    guest.rack = ["coral-8-1", "ink-1-1"];
+    host.opened = true;
+    guest.opened = true;
+    stored.pool = remaining;
+    stored.board = baseBoard;
+    stored.turnIndex = stored.players.indexOf(host);
+    stored.turnStartedAt = turnStartedAt;
+    stored.turnDeadline = turnStartedAt + 60_000;
+    stored.turnDraft = null;
+    stored.consecutiveEmptyDraws = 0;
+    stored.status = "playing";
+    stored.winnerId = null;
+    stored.scores = null;
+    stored.version += 1;
+    stored.updatedAt = Date.now();
+    state.storage.sql.exec(
+      "UPDATE game_state SET json = ?, updated_at = ? WHERE singleton = 1",
+      JSON.stringify(stored),
+      stored.updatedAt,
+    );
+  });
+  await evictDurableObject(room);
+  return { room, hostToken, guestToken, turnStartedAt };
+}
 
 describe("GameRoom", () => {
   it("sets tied starting-player draws aside until the tie is resolved", () => {
@@ -61,6 +135,114 @@ describe("GameRoom", () => {
     expect(nextView.poolCount).toBe(77);
     const drawer = nextView.players.find((player) => player.id === currentId);
     expect(drawer?.rackCount).toBe(15);
+  });
+
+  it("lets the host issue and replace a rejoin credential without invalidating the original player credential", async () => {
+    const roomCode = `R${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
+    const hostToken = "rejoin-host-token";
+    const guestToken = "rejoin-guest-token";
+    const firstRejoinToken = "first-rejoin-token";
+    const secondRejoinToken = "second-rejoin-token";
+    const room = env.GAME_ROOMS.getByName(roomCode);
+
+    expect(await room.create(
+      roomCode,
+      { name: "Ada", mode: "correspondence", maxPlayers: 2 },
+      "host",
+      await hashToken(hostToken),
+    )).toEqual({ ok: true });
+    expect(await room.join("Grace", "guest", await hashToken(guestToken))).toEqual({ ok: true });
+
+    expect(await room.setPlayerRejoinToken(
+      "host",
+      hostToken,
+      "guest",
+      await hashToken(firstRejoinToken),
+    )).toEqual({ ok: true });
+    await evictDurableObject(room);
+    await expect(room.getPublicState("guest", firstRejoinToken)).resolves.toEqual(expect.objectContaining({
+      myPlayerId: "guest",
+    }));
+    await expect(room.getPublicState("guest", guestToken)).resolves.toEqual(expect.objectContaining({
+      myPlayerId: "guest",
+    }));
+
+    expect(await room.setPlayerRejoinToken(
+      "host",
+      hostToken,
+      "guest",
+      await hashToken(secondRejoinToken),
+    )).toEqual({ ok: true });
+    await evictDurableObject(room);
+    expect(await room.setAssist("guest", firstRejoinToken, "no-move-alert", true)).toEqual({
+      ok: false,
+      error: "That player link is not valid.",
+    });
+    await expect(room.getPublicState("guest", secondRejoinToken)).resolves.toEqual(expect.objectContaining({
+      myPlayerId: "guest",
+    }));
+    await expect(room.getPublicState("guest", guestToken)).resolves.toEqual(expect.objectContaining({
+      myPlayerId: "guest",
+    }));
+  });
+
+  it("rejects rejoin credentials issued by non-hosts or invalid host sessions", async () => {
+    const roomCode = `N${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
+    const hostToken = "rejoin-authorization-host-token";
+    const guestToken = "rejoin-authorization-guest-token";
+    const rejectedToken = "rejected-rejoin-token";
+    const rejectedTokenHash = await hashToken(rejectedToken);
+    const room = env.GAME_ROOMS.getByName(roomCode);
+
+    expect(await room.create(
+      roomCode,
+      { name: "Ada", mode: "correspondence", maxPlayers: 2 },
+      "host",
+      await hashToken(hostToken),
+    )).toEqual({ ok: true });
+    expect(await room.join("Grace", "guest", await hashToken(guestToken))).toEqual({ ok: true });
+
+    expect(await room.setPlayerRejoinToken("guest", guestToken, "guest", rejectedTokenHash)).toEqual({
+      ok: false,
+      error: "Only the host can create rejoin links.",
+    });
+    expect(await room.setPlayerRejoinToken("host", "invalid-host-token", "guest", rejectedTokenHash)).toEqual({
+      ok: false,
+      error: "That player link is not valid.",
+    });
+    expect(await room.setAssist("guest", rejectedToken, "no-move-alert", true)).toEqual({
+      ok: false,
+      error: "That player link is not valid.",
+    });
+    await expect(room.getPublicState("guest", guestToken)).resolves.toEqual(expect.objectContaining({
+      myPlayerId: "guest",
+    }));
+  });
+
+  it("rejects rejoin credentials for missing and computer-controlled players", async () => {
+    const roomCode = `C${crypto.randomUUID().replaceAll("-", "").slice(0, 5)}`.toLocaleUpperCase();
+    const hostToken = "rejoin-target-host-token";
+    const rejoinTokenHash = await hashToken("invalid-target-rejoin-token");
+    const room = env.GAME_ROOMS.getByName(roomCode);
+
+    expect(await room.create(
+      roomCode,
+      { name: "Ada", mode: "correspondence", maxPlayers: 3 },
+      "host",
+      await hashToken(hostToken),
+    )).toEqual({ ok: true });
+    expect(await room.addComputer("host", hostToken, "basic")).toEqual({ ok: true });
+    const computer = (await room.getPublicState("host", hostToken)).players.find((player) => player.isComputer);
+    expect(computer).toBeDefined();
+
+    expect(await room.setPlayerRejoinToken("host", hostToken, "missing-player", rejoinTokenHash)).toEqual({
+      ok: false,
+      error: "Player not found in this room.",
+    });
+    expect(await room.setPlayerRejoinToken("host", hostToken, computer!.id, rejoinTokenHash)).toEqual({
+      ok: false,
+      error: "Computer players cannot use rejoin links.",
+    });
   });
 
   it("passes and finishes the game after everyone draws from an empty pool", async () => {
@@ -401,5 +583,81 @@ describe("GameRoom", () => {
     const afterAlarm = await room.getPublicState(currentPlayerId, tokenByPlayer[currentPlayerId]);
     expect(afterAlarm.currentPlayerId).not.toBe(currentPlayerId);
     expect(afterAlarm.history.at(-1)?.message).toContain("auto-drew a tile because no move was possible");
+  });
+
+  it("applies a staged pre-move when the opponent leaves it legal", async () => {
+    const { room, hostToken, guestToken, turnStartedAt } = await createPreMoveRoom();
+    expect(await room.saveTurnDraft("guest", guestToken, {
+      turnStartedAt,
+      sequence: 1,
+      board: preMoveBoard,
+      preMove: true,
+    })).toEqual({ ok: true });
+
+    const waiting = await room.getPublicState("guest", guestToken);
+    expect(waiting.myPreMove).toEqual(preMoveBoard);
+    expect(waiting.currentPlayerId).toBe("host");
+
+    expect(await room.act("host", hostToken, { type: "draw" })).toEqual({ ok: true });
+    const after = await room.getPublicState("guest", guestToken);
+    expect(after.currentPlayerId).toBe("host");
+    expect(after.board).toEqual([
+      { id: expect.any(String), tileIds: preMoveBoard[0]!.tileIds },
+      { id: expect.any(String), tileIds: preMoveBoard[1]!.tileIds },
+    ]);
+    expect(after.myRack).toEqual(["ink-1-1"]);
+    expect(after.myPreMove).toBeNull();
+  });
+
+  it("abandons a pre-move when the opponent changes its affected meld", async () => {
+    const { room, hostToken, guestToken, turnStartedAt } = await createPreMoveRoom();
+    expect(await room.saveTurnDraft("guest", guestToken, {
+      turnStartedAt,
+      sequence: 1,
+      board: preMoveBoard,
+      preMove: true,
+    })).toEqual({ ok: true });
+
+    expect(await room.act("host", hostToken, {
+      type: "commit",
+      board: [
+        { id: "changed-run", tileIds: ["coral-4-1", "coral-5-1", "coral-6-1", "coral-7-1"] },
+        { id: "base-sun-run", tileIds: ["sun-5-1", "sun-6-1", "sun-7-1"] },
+      ],
+    })).toEqual({ ok: true });
+    const after = await room.getPublicState("guest", guestToken);
+    expect(after.currentPlayerId).toBe("guest");
+    expect(after.board).toEqual([
+      { id: expect.any(String), tileIds: ["coral-4-1", "coral-5-1", "coral-6-1", "coral-7-1"] },
+      { id: expect.any(String), tileIds: preMoveBoard[1]!.tileIds },
+    ]);
+    expect(after.myRack).toEqual(["coral-8-1", "ink-1-1"]);
+    expect(after.myPreMove).toBeNull();
+  });
+
+  it("carries unrelated opponent meld changes into a pre-move", async () => {
+    const { room, hostToken, guestToken, turnStartedAt } = await createPreMoveRoom();
+    expect(await room.saveTurnDraft("guest", guestToken, {
+      turnStartedAt,
+      sequence: 1,
+      board: preMoveBoard,
+      preMove: true,
+    })).toEqual({ ok: true });
+
+    expect(await room.act("host", hostToken, {
+      type: "commit",
+      board: [
+        { id: "base-run", tileIds: ["coral-5-1", "coral-6-1", "coral-7-1"] },
+        { id: "extended-sun-run", tileIds: ["sun-4-1", "sun-5-1", "sun-6-1", "sun-7-1"] },
+      ],
+    })).toEqual({ ok: true });
+    const after = await room.getPublicState("guest", guestToken);
+    expect(after.currentPlayerId).toBe("host");
+    expect(after.board).toEqual([
+      { id: expect.any(String), tileIds: preMoveBoard[0]!.tileIds },
+      { id: expect.any(String), tileIds: ["sun-4-1", "sun-5-1", "sun-6-1", "sun-7-1"] },
+    ]);
+    expect(after.myRack).toEqual(["ink-1-1"]);
+    expect(after.myPreMove).toBeNull();
   });
 });

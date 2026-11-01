@@ -15,6 +15,7 @@ import type {
   HealthResponse,
   OkResponse,
   PlayerLink,
+  PublicGameState,
   RoomResult,
   SaveTurnDraftInput,
   SetAssistInput,
@@ -383,6 +384,51 @@ app.get("/api/games/:room/link", async (context) => {
       "invalid_session",
     );
   }
+});
+
+app.post("/api/games/:room/players/:player/rejoin-link", async (context) => {
+  const roomCode = normalizeRoomCode(context.req.param("room"));
+  const targetPlayerId = context.req.param("player");
+  const identity = requestSession(context.req.raw, roomCode);
+  if (!identity) return errorJson(context, 401, "That player session is not valid.", "invalid_session");
+
+  const room = context.env.GAME_ROOMS.getByName(roomCode);
+  let state: PublicGameState;
+  try {
+    state = await room.getPublicState(identity.playerId, identity.token);
+  } catch (error) {
+    return errorJson(
+      context,
+      401,
+      error instanceof Error ? error.message : "That player session is not valid.",
+      "invalid_session",
+    );
+  }
+
+  const requester = state.players.find((player) => player.id === state.myPlayerId);
+  if (!requester?.isHost) {
+    return errorJson(context, 403, "Only the host can create rejoin links.", "host_required");
+  }
+  if (targetPlayerId === identity.playerId || targetPlayerId.length < 1 || targetPlayerId.length > 80) {
+    return errorJson(context, 400, "Choose another human player for the rejoin link.", "invalid_rejoin_target");
+  }
+  const target = state.players.find((player) => player.id === targetPlayerId);
+  if (!target) return errorJson(context, 404, "Player not found in this room.", "player_not_found");
+  if (target.isComputer) {
+    return errorJson(context, 409, "Computer players cannot use rejoin links.", "computer_player");
+  }
+
+  const token = makeCredential();
+  const result = checkedRoomResult(
+    await room.setPlayerRejoinToken(identity.playerId, identity.token, targetPlayerId, await hashToken(token)),
+  );
+  if (!result.ok) {
+    return errorJson(context, 409, result.error ?? "Could not create that rejoin link.", "rejoin_link_failed");
+  }
+
+  if (querySession(context.req.raw, roomCode)) setSessionCookie(context, identity);
+  const targetSession: SessionCredentials = { roomCode, playerId: targetPlayerId, token };
+  return checkedJson(context, validators.playerLink, portableLink(context, targetSession), 201);
 });
 
 app.get("/api/games/history", async (context) => {

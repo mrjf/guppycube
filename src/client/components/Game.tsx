@@ -12,11 +12,14 @@ import {
   HelpCircle,
   History,
   Layers3,
+  Link2,
   LogOut,
+  Menu,
   Palette,
   Plus,
   Redo2,
   RotateCcw,
+  Search,
   SlidersHorizontal,
   Sparkles,
   Undo2,
@@ -32,13 +35,15 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { resolveWilcardAssignments, validateSet, validateTurn } from "../../shared/rules";
+import { findLegalMoves, resolveWilcardAssignments, validateSet, validateTurn } from "../../shared/rules";
+import type { LegalMove } from "../../shared/rules";
 import { findLinkedRackTileIds, groupSortedRackTileIds, normalizeSetTileIds, sortTileIds } from "../../shared/sorting";
 import type { TileSortMode } from "../../shared/sorting";
 import { ASSIST_DEFINITIONS } from "../../shared/types";
 import type { AssistId, ComputerStrategyId, GameEvent, GameSession, GameSet, PublicGameState } from "../../shared/types";
 import { validators } from "../../validation";
-import { addComputer, ApiRequestError, getGame, getPlayerLink, saveTurnDraft, setAssist, socketUrl, startGame, takeAction } from "../api";
+import { addComputer, ApiRequestError, getGame, getPlayerLink, getPlayerRejoinLink, saveTurnDraft, setAssist, socketUrl, startGame, takeAction } from "../api";
+import { appPath } from "../base-path";
 import { createFeltLayout } from "../felt-layout";
 import type { FeltLayout } from "../felt-layout";
 import { mergeGameState } from "../game-state";
@@ -80,6 +85,19 @@ type DragItem =
   | { type: "tiles"; tileIds: string[] }
   | { type: "set"; setId: string };
 
+interface TouchDrag {
+  pointerId: number;
+  tileId: string;
+  startX: number;
+  startY: number;
+  active: boolean;
+  tileIds: string[];
+  previousSelection: string[];
+  preview: HTMLElement | null;
+  offsetX: number;
+  offsetY: number;
+}
+
 interface TurnDraft {
   board: GameSet[];
   rackLayout: RackLayout;
@@ -88,6 +106,7 @@ interface TurnDraft {
 const DRAG_ITEM_TYPE = "application/x-guppycube-item";
 const RACK_HOLD_MS = 500;
 const RACK_HOLD_REPEAT_MS = 350;
+const TOUCH_DRAG_SLOP_PX = 6;
 const ENABLED_TILE_SELECTOR = ".tile[data-tile-id]:not(:disabled)";
 const COMPUTER_RACK_PREFERENCE_KEY = "guppycube:show-computer-racks";
 const RACK_AUTOSORT_PREFERENCE_KEY = "guppycube:rack-autosort";
@@ -486,12 +505,17 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [focusedTileId, setFocusedTileId] = useState<string | null>(null);
   const [focusedSetId, setFocusedSetId] = useState<string | null>(null);
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
+  const [copiedPlayerLink, setCopiedPlayerLink] = useState(false);
   const [portableLink, setPortableLink] = useState<string | null>(null);
+  const [busyRejoinPlayerIds, setBusyRejoinPlayerIds] = useState<string[]>([]);
+  const [copiedRejoinPlayerIds, setCopiedRejoinPlayerIds] = useState<string[]>([]);
   const [showActivity, setShowActivity] = useState(false);
   const [showAssists, setShowAssists] = useState(false);
+  const [showMoveFinder, setShowMoveFinder] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showMobileTools, setShowMobileTools] = useState(false);
   const [turnNotificationsEnabled, setTurnNotificationsEnabled] = useState(() =>
     localStorage.getItem(TURN_NOTIFICATIONS_PREFERENCE_KEY) === "true",
   );
@@ -519,12 +543,19 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const [now, setNow] = useState(Date.now());
   const feltRef = useRef<HTMLDivElement>(null);
   const poolRef = useRef<HTMLButtonElement>(null);
+  const mobileToolsToggleRef = useRef<HTMLButtonElement>(null);
   const rackHoldTimer = useRef<number | null>(null);
   const rackHoldRun = useRef(0);
   const rackHoldPointerId = useRef<number | null>(null);
   const tileDragPreview = useRef<HTMLElement | null>(null);
   const suppressTileClick = useRef<string | null>(null);
   const doubleClickSetId = useRef<string | null>(null);
+  const touchDrag = useRef<TouchDrag | null>(null);
+  const selectedTileIdsRef = useRef(selectedTileIds);
+  selectedTileIdsRef.current = selectedTileIds;
+  useEffect(() => () => {
+    touchDrag.current?.preview?.remove();
+  }, []);
   const selectionAnchorId = useRef<string | null>(null);
   const actionRoomId = useRef<string | null>(null);
   const seenTurnActionIds = useRef<Set<string>>(new Set());
@@ -893,6 +924,16 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   const hasBoardDefect = (isMyTurn ? dirty : hasLiveOpponentDraft)
     && visibleTurnValidation?.valid === false;
 
+  const moveAnalysis = useMemo(() => {
+    if (!game || game.status !== "playing" || !showMoveFinder) return null;
+    return findLegalMoves({
+      board: game.board,
+      rack: game.myRack,
+      opened: me?.opened ?? false,
+      tiles: game.tiles,
+    }, { maxMoves: 24 });
+  }, [game, me?.opened, showMoveFinder]);
+
   const openingPoints = useMemo(() => {
     if (!game || me?.opened) return 0;
     return draftBoard.reduce((sum, set) => {
@@ -1084,6 +1125,81 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     clearTurnInteraction();
   }
 
+  function stageLegalMove(move: LegalMove) {
+    if (!game || busy) return;
+    if (!isMyTurn) {
+      void stagePreMove(move);
+      return;
+    }
+    const played = new Set(move.playedTileIds);
+    const remainingRack = game.myRack.filter((tileId) => !played.has(tileId));
+    const nextRackLayout = rackAutoSort
+      ? createRackLayout(sortTileIds(remainingRack, game.tiles, rackSortMode))
+      : reconcileRackLayout(draftRackLayout, remainingRack, MANUAL_RACK_SLOTS_PER_ROW);
+    recordDraft(move.board, nextRackLayout);
+    setShowMoveFinder(false);
+    setInteractionAnnouncement(`Staged a ${legalMoveKindLabel(move.kind).toLocaleLowerCase()}. Review it on the felt, then commit when ready.`);
+  }
+
+  async function stagePreMove(move: LegalMove) {
+    await stagePreMoveBoard(move.board);
+  }
+
+  async function stagePreMoveBoard(board: GameSet[]) {
+    if (!game || isMyTurn || busy || game.turnStartedAt === null) return;
+    const sequence = Math.max(Date.now(), draftSequence.current + 1);
+    draftSequence.current = sequence;
+    setBusy(true);
+    setError("");
+    try {
+      await saveTurnDraft(session, {
+        turnStartedAt: game.turnStartedAt,
+        sequence,
+        board,
+        preMove: true,
+      });
+      setGame((current) => current ? {
+        ...current,
+        myPreMove: board.map((set) => ({ ...set, tileIds: [...set.tileIds] })),
+      } : current);
+      setShowMoveFinder(false);
+      setInteractionAnnouncement("Pre-move staged. It will play automatically if the opponent leaves it legal.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not stage your pre-move.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearPreMove() {
+    if (!game || isMyTurn || busy || game.turnStartedAt === null || game.myPreMove === null) return;
+    setBusy(true);
+    setError("");
+    try {
+      await saveTurnDraft(session, {
+        turnStartedAt: game.turnStartedAt,
+        sequence: Math.max(Date.now(), draftSequence.current + 1),
+        board: game.board,
+        clearPreMove: true,
+      });
+      setGame((current) => current ? { ...current, myPreMove: null } : current);
+      setInteractionAnnouncement("Pre-move canceled.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not cancel your pre-move.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function legalMoveKindLabel(kind: LegalMove["kind"]): string {
+    switch (kind) {
+      case "opening": return "Opening play";
+      case "rack-set": return "Rack-only set";
+      case "table-extension": return "Felt extension";
+      case "rearrangement": return "Felt rearrangement";
+    }
+  }
+
   function showTurnHistory(index: number) {
     if (!game || index < 0 || index >= turnHistory.length) return;
     const draft = turnHistory[index];
@@ -1167,7 +1283,45 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       return;
     }
 
-    if (!isMyTurn) return;
+    if (!isMyTurn) {
+      // A rack tile can be pre-moved onto an existing meld while another
+      // player is thinking. Build the candidate from the authoritative board
+      // so a live opponent draft cannot accidentally become part of it.
+      if (target.type === "rack" || !movingTileIds.every((tileId) => originalRackTiles.has(tileId))) {
+        return;
+      }
+
+      const nextBoard = game.board.map((set) => ({ ...set, tileIds: [...set.tileIds] }));
+      if (target.type === "set") {
+        let targetIndex = nextBoard.findIndex((set) => set.id === target.setId);
+        if (targetIndex < 0) {
+          const renderedSet = draftBoard.find((set) => set.id === target.setId);
+          if (renderedSet) {
+            const renderedMembership = new Set(renderedSet.tileIds);
+            targetIndex = nextBoard.findIndex((set) => set.tileIds.length === renderedSet.tileIds.length
+              && set.tileIds.every((tileId) => renderedMembership.has(tileId)));
+          }
+        }
+        if (targetIndex < 0) {
+          setError("That meld changed while the opponent was moving. Choose a meld from the current table.");
+          return;
+        }
+        const targetSet = nextBoard[targetIndex]!;
+        nextBoard[targetIndex] = {
+          ...targetSet,
+          tileIds: normalizeSetTileIds([...targetSet.tileIds, ...movingTileIds], game.tiles),
+        };
+      } else if (target.type === "new") {
+        nextBoard.push({
+          id: target.setId ?? `pre-move-${crypto.randomUUID()}`,
+          tileIds: normalizeSetTileIds(movingTileIds, game.tiles),
+        });
+      }
+
+      setInteractionAnnouncement("Staging pre-move…");
+      void stagePreMoveBoard(nextBoard);
+      return;
+    }
 
     if (target.type === "rack" && movingTileIds.some((tileId) => originalBoardTiles.has(tileId))) {
       setError("A table tile cannot return to your rack. Move it into another set.");
@@ -1454,6 +1608,12 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
 
   function dragTileStart(event: DragEvent<HTMLButtonElement>, tileId: string) {
     event.stopPropagation();
+    if (touchDrag.current) {
+      // Touch pointers move tiles through the pointer-driven drag below, so
+      // keep the browser's native long-press drag from starting alongside it.
+      event.preventDefault();
+      return;
+    }
     cancelRackHold();
     const tileIds = selectedTileIds.length > 1 && selectedTileIds.includes(tileId)
       ? selectedTileIds
@@ -1466,46 +1626,171 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
     tileDragPreview.current?.remove();
     tileDragPreview.current = null;
     if (typeof event.dataTransfer.setDragImage === "function") {
-      const tileStyle = getComputedStyle(event.currentTarget);
-      let preview: HTMLElement;
-      let offsetX: number;
-      let offsetY: number;
-
-      if (tileIds.length > 1) {
-        preview = createMultiTileDragPreview(tileStyle);
-        offsetX = 29;
-        offsetY = 38;
-      } else {
-        // Felt tiles are inside a scaled set. Cloning the tile into the body
-        // gives the browser an untransformed drag image, just like the rack.
-        const tilePreview = event.currentTarget.cloneNode(true) as HTMLButtonElement;
-        tilePreview.classList.remove("is-selected", "is-new-activity");
-        tilePreview.setAttribute("aria-hidden", "true");
-        tilePreview.tabIndex = -1;
-        tilePreview.style.position = "fixed";
-        tilePreview.style.top = "-1000px";
-        tilePreview.style.left = "-1000px";
-        tilePreview.style.margin = "0";
-        tilePreview.style.transform = "none";
-        tilePreview.style.width = tileStyle.width;
-        tilePreview.style.height = tileStyle.height;
-        for (let index = 0; index < tileStyle.length; index += 1) {
-          const property = tileStyle[index];
-          if (property?.startsWith("--tile-")) {
-            tilePreview.style.setProperty(property, tileStyle.getPropertyValue(property));
-          }
-        }
-        preview = tilePreview;
-        offsetX = Number.parseFloat(tileStyle.width) / 2;
-        offsetY = Number.parseFloat(tileStyle.height) / 2;
-      }
-
+      const { preview, offsetX, offsetY } = createTileDragPreview(event.currentTarget, tileIds);
       document.body.append(preview);
       event.dataTransfer.setDragImage(preview, offsetX, offsetY);
       tileDragPreview.current = preview;
     }
     setSelectedTileIds(tileIds);
     setDraggedItem(item);
+  }
+
+  function createTileDragPreview(tileElement: HTMLButtonElement, tileIds: string[]): { preview: HTMLElement; offsetX: number; offsetY: number } {
+    const tileStyle = getComputedStyle(tileElement);
+    if (tileIds.length > 1) {
+      return { preview: createMultiTileDragPreview(tileStyle), offsetX: 29, offsetY: 38 };
+    }
+    // Felt tiles are inside a scaled set. Cloning the tile into the body
+    // gives the browser an untransformed drag image, just like the rack.
+    const tilePreview = tileElement.cloneNode(true) as HTMLButtonElement;
+    tilePreview.classList.remove("is-selected", "is-new-activity");
+    tilePreview.setAttribute("aria-hidden", "true");
+    tilePreview.tabIndex = -1;
+    tilePreview.style.position = "fixed";
+    tilePreview.style.top = "-1000px";
+    tilePreview.style.left = "-1000px";
+    tilePreview.style.margin = "0";
+    tilePreview.style.transform = "none";
+    tilePreview.style.width = tileStyle.width;
+    tilePreview.style.height = tileStyle.height;
+    for (let index = 0; index < tileStyle.length; index += 1) {
+      const property = tileStyle[index];
+      if (property?.startsWith("--tile-")) {
+        tilePreview.style.setProperty(property, tileStyle.getPropertyValue(property));
+      }
+    }
+    return {
+      preview: tilePreview,
+      offsetX: Number.parseFloat(tileStyle.width) / 2,
+      offsetY: Number.parseFloat(tileStyle.height) / 2,
+    };
+  }
+
+  // Touch and pen pointers cannot use the HTML drag-and-drop path on most
+  // phones, so tiles track the pointer themselves: a press that moves past a
+  // small slop lifts the tile (or the selected group it belongs to) and drops
+  // it on whatever set, rack slot, or open felt is under the finger.
+  function beginTouchDragTracking(event: ReactPointerEvent<HTMLButtonElement>, tileId: string) {
+    // A new press means any click from the previous gesture has already
+    // fired, so a leftover suppression must not swallow this tap.
+    suppressTileClick.current = null;
+    if (!game || !isMyTurn || !event.isPrimary || (event.pointerType !== "touch" && event.pointerType !== "pen")) return;
+    cancelTouchDrag();
+    touchDrag.current = {
+      pointerId: event.pointerId,
+      tileId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      tileIds: [],
+      previousSelection: selectedTileIdsRef.current,
+      preview: null,
+      offsetX: 0,
+      offsetY: 0,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer events do not have an active pointer to capture.
+    }
+  }
+
+  function moveTouchDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = touchDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.active) {
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (dx * dx + dy * dy < TOUCH_DRAG_SLOP_PX * TOUCH_DRAG_SLOP_PX) return;
+      if (!isMyTurn) {
+        touchDrag.current = null;
+        return;
+      }
+      cancelRackHold();
+      const selected = selectedTileIdsRef.current;
+      const tileIds = selected.includes(drag.tileId) ? selected : [drag.tileId];
+      const { preview, offsetX, offsetY } = createTileDragPreview(event.currentTarget, tileIds);
+      preview.classList.add("is-touch-drag-preview");
+      preview.style.top = "0";
+      preview.style.left = "0";
+      preview.style.zIndex = "1000";
+      preview.style.pointerEvents = "none";
+      document.body.append(preview);
+      drag.active = true;
+      drag.tileIds = tileIds;
+      drag.preview = preview;
+      drag.offsetX = offsetX;
+      drag.offsetY = offsetY;
+      suppressTileClick.current = drag.tileId;
+      selectionAnchorId.current = drag.tileId;
+      setSelectedTileIds(tileIds);
+      setDraggedItem({ type: "tiles", tileIds });
+      setInteractionAnnouncement(`Dragging ${tileIds.length === 1 ? tileName(drag.tileId) : `${tileIds.length} tiles`}.`);
+    }
+    drag.preview?.style.setProperty("transform", `translate3d(${event.clientX - drag.offsetX}px, ${event.clientY - drag.offsetY}px, 0)`);
+    const target = touchDropTargetAt(event.clientX, event.clientY);
+    setDropTargetSetId(target?.type === "set" ? target.setId : null);
+    setRackDropTarget(target?.type === "rack" && target.slotIndex !== undefined
+      ? { slotIndex: target.slotIndex, side: target.side ?? "before" }
+      : null);
+  }
+
+  function touchDropTargetAt(clientX: number, clientY: number): MoveTarget | null {
+    const element = document.elementFromPoint(clientX, clientY);
+    if (!(element instanceof Element)) return null;
+    const set = element.closest<HTMLElement>(".set[data-set-id]");
+    if (set?.dataset.setId) return { type: "set", setId: set.dataset.setId };
+    const rack = element.closest<HTMLElement>(".rack");
+    if (rack) {
+      const slot = element.closest<HTMLElement>(".rack-slot") ?? rackSlotAtPoint(rack, clientX, clientY);
+      const slotIndex = Number.parseInt(slot?.dataset.rackSlot ?? "", 10);
+      if (slot && Number.isInteger(slotIndex)) {
+        return { type: "rack", slotIndex, side: rackDropSideForElement(slot, clientX) };
+      }
+      return { type: "rack" };
+    }
+    if (element.closest(".table-surface")) return { type: "new" };
+    return null;
+  }
+
+  function finishTouchDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = touchDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    touchDrag.current = null;
+    if (!drag.active) return;
+    drag.preview?.remove();
+    setDropTargetSetId(null);
+    setRackDropTarget(null);
+    releaseTileClickSuppression(drag.tileId);
+    const target = touchDropTargetAt(event.clientX, event.clientY);
+    if (target) {
+      moveTiles(drag.tileIds, target);
+      return;
+    }
+    setDraggedItem(null);
+    setSelectedTileIds(drag.previousSelection);
+    setInteractionAnnouncement("Drag canceled. Tiles stay where they were.");
+  }
+
+  function cancelTouchDrag() {
+    const drag = touchDrag.current;
+    if (!drag) return;
+    touchDrag.current = null;
+    if (!drag.active) return;
+    drag.preview?.remove();
+    setDropTargetSetId(null);
+    setRackDropTarget(null);
+    setDraggedItem(null);
+    setSelectedTileIds(drag.previousSelection);
+    releaseTileClickSuppression(drag.tileId);
+  }
+
+  function releaseTileClickSuppression(tileId: string) {
+    // A drag that moved the finger usually produces no click, so do not let
+    // the suppression swallow the next deliberate tap on the same tile.
+    window.setTimeout(() => {
+      if (suppressTileClick.current === tileId) suppressTileClick.current = null;
+    }, 400);
   }
 
   function createMultiTileDragPreview(tileStyle: CSSStyleDeclaration): HTMLElement {
@@ -1759,21 +2044,50 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
   }
 
   async function copyInvite() {
-    let invite = portableLink;
-    if (!invite) {
+    const invite = new URL(appPath(`/room/${session.roomCode}`), window.location.origin).toString();
+    try {
+      await navigator.clipboard.writeText(invite);
+      setCopiedInvite(true);
+      window.setTimeout(() => setCopiedInvite(false), 1_600);
+    } catch {
+      setError(`Share this link: ${invite}`);
+    }
+  }
+
+  async function copyPlayerLink() {
+    let link = portableLink;
+    if (!link) {
       try {
-        invite = (await getPlayerLink(session)).link;
-        setPortableLink(invite);
-      } catch {
-        invite = window.location.href;
+        link = (await getPlayerLink(session)).link;
+        setPortableLink(link);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Could not create your player link.");
+        return;
       }
     }
     try {
-      await navigator.clipboard.writeText(invite);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_600);
+      await navigator.clipboard.writeText(link);
+      setCopiedPlayerLink(true);
+      window.setTimeout(() => setCopiedPlayerLink(false), 1_600);
     } catch {
-      setError(`Share this link: ${invite}`);
+      setError(`Share this link: ${link}`);
+    }
+  }
+
+  async function copyPlayerRejoinLink(playerId: string, playerName: string) {
+    setBusyRejoinPlayerIds((current) => current.includes(playerId) ? current : [...current, playerId]);
+    setError("");
+    try {
+      const { link } = await getPlayerRejoinLink(session, playerId);
+      await navigator.clipboard.writeText(link);
+      setCopiedRejoinPlayerIds((current) => current.includes(playerId) ? current : [...current, playerId]);
+      window.setTimeout(() => {
+        setCopiedRejoinPlayerIds((current) => current.filter((id) => id !== playerId));
+      }, 1_600);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : `Could not copy the rejoin link for ${playerName}.`);
+    } finally {
+      setBusyRejoinPlayerIds((current) => current.filter((id) => id !== playerId));
     }
   }
 
@@ -1954,16 +2268,47 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         <section className="lobby-card">
           <p className="eyebrow">Your table is ready</p>
           <h1>Bring in the<br />competition.</h1>
-          <button className="invite-code" type="button" onClick={copyInvite}>
-            <span>Table name</span><strong>{game.id}</strong><small>{copied ? <><Check size={15} /> Copied your player link</> : <><Copy size={15} /> Click to copy your player link</>}</small>
-          </button>
+          <div className="invite-code">
+            <span>Table name</span><strong>{game.id}</strong>
+            <div className="invite-actions">
+              <button className="secondary-button invite-action" type="button" onClick={() => { void copyInvite(); }}>
+                {copiedInvite ? <Check size={15} /> : <Link2 size={15} />}
+                {copiedInvite ? "Invite link copied" : "Copy invite link"}
+              </button>
+              <button className="secondary-button invite-action" type="button" onClick={() => { void copyPlayerLink(); }}>
+                {copiedPlayerLink ? <Check size={15} /> : <Copy size={15} />}
+                {copiedPlayerLink ? "Player link copied" : "Copy your player link"}
+              </button>
+            </div>
+          </div>
           <div className="lobby-seats">
             {Array.from({ length: game.maxPlayers }, (_, index) => {
               const player = game.players[index];
-              return player ? (
-                <div className={`seat is-filled ${player.isComputer ? "is-computer" : ""}`} key={player.id}><span>{player.isComputer ? <Bot size={20} /> : initials(player.name)}</span><div><strong>{player.name}</strong><small>{player.isHost ? "Host" : player.isComputer ? `Computer · ${player.computerStrategy ?? "basic"}` : "Ready"}</small></div>{player.isComputer ? <Bot size={18} /> : <Check size={18} />}</div>
-              ) : (
+              if (!player) return (
                 <div className="seat" key={index}><span><Plus /></span><div><strong>Open seat</strong><small>Waiting for a friend</small></div></div>
+              );
+              const canCopyRejoinLink = isHost && player.id !== game.myPlayerId && !player.isComputer;
+              const rejoinLinkCopied = copiedRejoinPlayerIds.includes(player.id);
+              const rejoinLinkLabel = rejoinLinkCopied
+                ? `Rejoin link copied for ${player.name}`
+                : `Copy rejoin link for ${player.name}`;
+              return (
+                <div className={`seat is-filled ${player.isComputer ? "is-computer" : ""}`} key={player.id}>
+                  <span>{player.isComputer ? <Bot size={20} /> : initials(player.name)}</span>
+                  <div><strong>{player.name}</strong><small>{player.isHost ? "Host" : player.isComputer ? `Computer · ${player.computerStrategy ?? "basic"}` : "Ready"}</small></div>
+                  {canCopyRejoinLink ? (
+                    <button
+                      className={`player-link-button ${rejoinLinkCopied ? "is-copied" : ""}`}
+                      type="button"
+                      disabled={busyRejoinPlayerIds.includes(player.id)}
+                      aria-label={rejoinLinkLabel}
+                      title={rejoinLinkLabel}
+                      onClick={() => { void copyPlayerRejoinLink(player.id, player.name); }}
+                    >
+                      {rejoinLinkCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                    </button>
+                  ) : player.isComputer ? <Bot size={18} /> : <Check size={18} />}
+                </div>
               );
             })}
           </div>
@@ -2027,15 +2372,47 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       <p className="sr-only" aria-live="polite" aria-atomic="true">{interactionAnnouncement}</p>
       <header className="game-header">
         <button className="wordmark wordmark-button compact-mark" type="button" onClick={onExit} aria-label="guppycube home"><span><CatFaceIcon className="wordmark-cat" /></span><b>guppycube</b></button>
-        <div className="room-pill"><span>TABLE</span> <strong>{game.id}</strong><button className="room-copy-button" type="button" onClick={copyInvite} aria-label={copied ? "Player link copied" : "Copy your player link"} title={copied ? "Player link copied" : "Copy your player link"}>{copied ? <Check /> : <Copy />}</button></div>
+        <div className="room-pill">
+          <span>TABLE</span> <strong>{game.id}</strong>
+          <button className="room-copy-button" type="button" onClick={() => { void copyInvite(); }} aria-label={copiedInvite ? "Invite link copied" : "Copy invite link"} title={copiedInvite ? "Invite link copied" : "Copy invite link"}>{copiedInvite ? <Check /> : <Link2 />}</button>
+          <button className="room-copy-button" type="button" onClick={() => { void copyPlayerLink(); }} aria-label={copiedPlayerLink ? "Player link copied" : "Copy your player link"} title={copiedPlayerLink ? "Player link copied" : "Copy your player link"}>{copiedPlayerLink ? <Check /> : <Copy />}</button>
+        </div>
         <div className="header-actions">
           <span className={`connection-pill is-${connection}`}>{connection === "online" ? <Wifi /> : <WifiOff />} {connection}</span>
-          <button className={`icon-button ${turnNotificationsEnabled && notificationPermission === "granted" ? "is-active" : ""}`} type="button" aria-pressed={showNotifications} onClick={() => { setShowNotifications(!showNotifications); setShowAppearance(false); setShowAssists(false); setShowActivity(false); }} aria-label="Turn notifications"><Bell /></button>
-          <button className="icon-button" type="button" aria-pressed={showAppearance} onClick={() => { setShowAppearance(!showAppearance); setShowNotifications(false); setShowAssists(false); setShowActivity(false); }} aria-label="Appearance"><Palette /></button>
-          <button className="icon-button" type="button" aria-pressed={showAssists} onClick={() => { setShowAssists(!showAssists); setShowNotifications(false); setShowAppearance(false); setShowActivity(false); }} aria-label="Assists"><SlidersHorizontal /></button>
-          <button className="icon-button" type="button" aria-pressed={showActivity} onClick={() => { setShowActivity(!showActivity); setShowNotifications(false); setShowAppearance(false); setShowAssists(false); }} aria-label="Activity"><History /></button>
-          <button className="icon-button" type="button" onClick={onShowRules} aria-label="How to play and keyboard controls"><HelpCircle /></button>
-          <button className="icon-button desktop-only" type="button" onClick={onExit} aria-label="Leave table"><LogOut /></button>
+          <div className={`mobile-tools ${showMobileTools ? "is-open" : ""}`}>
+            <button
+              ref={mobileToolsToggleRef}
+              className="icon-button mobile-tools-toggle"
+              type="button"
+              aria-label="Table tools"
+              aria-expanded={showMobileTools}
+              aria-controls="mobile-tools-panel"
+              onClick={() => setShowMobileTools((current) => !current)}
+            >
+              <Menu />
+            </button>
+            <div
+              id="mobile-tools-panel"
+              className="mobile-tools-panel"
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest("button")) {
+                  const toggle = mobileToolsToggleRef.current;
+                  setShowMobileTools(false);
+                  if (toggle && window.getComputedStyle(toggle).display !== "none") {
+                    window.requestAnimationFrame(() => toggle.focus());
+                  }
+                }
+              }}
+            >
+              {game.status === "playing" && <button data-mobile-label="Move finder" className={`icon-button ${showMoveFinder ? "is-active" : ""}`} type="button" aria-pressed={showMoveFinder} onClick={() => { setShowMoveFinder(!showMoveFinder); setShowNotifications(false); setShowAppearance(false); setShowAssists(false); setShowActivity(false); }} aria-label="Move finder"><Search /></button>}
+              <button data-mobile-label="Notifications" className={`icon-button ${turnNotificationsEnabled && notificationPermission === "granted" ? "is-active" : ""}`} type="button" aria-pressed={showNotifications} onClick={() => { setShowNotifications(!showNotifications); setShowMoveFinder(false); setShowAppearance(false); setShowAssists(false); setShowActivity(false); }} aria-label="Turn notifications"><Bell /></button>
+              <button data-mobile-label="Appearance" className="icon-button" type="button" aria-pressed={showAppearance} onClick={() => { setShowAppearance(!showAppearance); setShowMoveFinder(false); setShowNotifications(false); setShowAssists(false); setShowActivity(false); }} aria-label="Appearance"><Palette /></button>
+              <button data-mobile-label="Assists" className="icon-button" type="button" aria-pressed={showAssists} onClick={() => { setShowAssists(!showAssists); setShowMoveFinder(false); setShowNotifications(false); setShowAppearance(false); setShowActivity(false); }} aria-label="Assists"><SlidersHorizontal /></button>
+              <button data-mobile-label="Activity" className="icon-button" type="button" aria-pressed={showActivity} onClick={() => { setShowActivity(!showActivity); setShowMoveFinder(false); setShowNotifications(false); setShowAppearance(false); setShowAssists(false); }} aria-label="Activity"><History /></button>
+              <button data-mobile-label="How to play" className="icon-button" type="button" onClick={onShowRules} aria-label="How to play and keyboard controls"><HelpCircle /></button>
+              <button data-mobile-label="Leave table" className="icon-button" type="button" onClick={onExit} aria-label="Leave table"><LogOut /></button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -2046,6 +2423,11 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           const isFlashing = flashedAction?.playerId === player.id;
           const isMe = player.id === game.myPlayerId;
           const isOnClock = player.id === game.currentPlayerId;
+          const canCopyRejoinLink = Boolean(me?.isHost) && !isMe && !player.isComputer;
+          const rejoinLinkCopied = copiedRejoinPlayerIds.includes(player.id);
+          const rejoinLinkLabel = rejoinLinkCopied
+            ? `Rejoin link copied for ${player.name}`
+            : `Copy rejoin link for ${player.name}`;
           const isComputerRackOpen = player.isComputer
             && !isMe
             && (openComputerRackIds.includes(ALL_COMPUTER_RACKS) || openComputerRackIds.includes(player.id));
@@ -2066,6 +2448,21 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                 {lastTurnSummary && <small className="player-last-turn">Last: {lastTurnSummary}</small>}
               </div>
               <div className="mini-rack"><Layers3 size={15} /><b>{player.rackCount}</b></div>
+              {canCopyRejoinLink && (
+                <button
+                  className={`player-link-button ${rejoinLinkCopied ? "is-copied" : ""}`}
+                  type="button"
+                  disabled={busyRejoinPlayerIds.includes(player.id)}
+                  aria-label={rejoinLinkLabel}
+                  title={rejoinLinkLabel}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void copyPlayerRejoinLink(player.id, player.name);
+                  }}
+                >
+                  {rejoinLinkCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                </button>
+              )}
               {player.isComputer && !isMe && (
                 <button
                   className={`computer-rack-toggle ${isComputerRackOpen ? "is-active" : ""}`}
@@ -2108,7 +2505,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           aria-label={`Game table${hasLiveOpponentDraft ? `, live attempt by ${currentPlayer?.name ?? "the current player"}` : ""}${hasBoardDefect && visibleTurnValidation?.reason ? `. Needs attention: ${visibleTurnValidation.reason}` : ""}`}
           onClick={() => selectedTileIds.length > 0 && moveTiles(selectedTileIds, { type: "new" })}
           onDragOver={(event) => {
-            if (!isMyTurn) return;
+            if (!isMyTurn && draggedItem?.type !== "tiles") return;
             event.preventDefault();
             event.dataTransfer.dropEffect = "move";
           }}
@@ -2177,7 +2574,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                       onDragStart={(event) => dragSetStart(event, set.id)}
                       onDragEnd={finishDrag}
                       onDragOver={(event) => {
-                        if (!isMyTurn) return;
+                        if (!isMyTurn && draggedItem?.type !== "tiles") return;
                         event.preventDefault();
                         event.stopPropagation();
                         event.dataTransfer.dropEffect = "move";
@@ -2198,16 +2595,18 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                           aria-pressed={draggedItem?.type === "set" && draggedItem.setId === set.id}
                           aria-label={draggedItem?.type === "set" && draggedItem.setId !== set.id
                             ? `Combine picked-up set with set ${setIndex + 1}`
-                            : `${draggedItem?.type === "set" ? "Put down" : "Pick up"} set ${setIndex + 1}`}
-                          title="Pick up this whole set; choose another set to combine"
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            event.stopPropagation();
-                            depositSelectedTilesIntoSet(set.id);
-                          }}
+                            : selectedTileIds.length > 0
+                              ? `Add ${selectedTileIds.length === 1 ? "the selected tile" : `${selectedTileIds.length} selected tiles`} to set ${setIndex + 1}`
+                              : `${draggedItem?.type === "set" ? "Put down" : "Pick up"} set ${setIndex + 1}`}
+                          title={selectedTileIds.length > 0
+                            ? "Add the selected tiles to this set"
+                            : "Pick up this whole set; choose another set to combine"}
                           onClick={(event) => {
                             event.stopPropagation();
+                            if (selectedTileIds.length > 0) {
+                              depositSelectedTilesIntoSet(set.id);
+                              return;
+                            }
                             pickUpOrMergeSet(set.id);
                           }}
                         ><GripVertical /></button>
@@ -2226,9 +2625,14 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                               newActivity={newActivityTiles.has(tileId)}
                               disabled={!isMyTurn}
                               keyShortcuts="Enter Shift+Enter Alt+Enter Control+A Meta+A"
-                          onClick={(event) => handleTileClick(event, tileId)}
-                          onFocus={() => handleTileFocus(tileId)}
-                          onKeyDown={(event) => handleTileKeyDown(event, tileId)}
+                              onClick={(event) => handleTileClick(event, tileId)}
+                              onFocus={() => handleTileFocus(tileId)}
+                              onKeyDown={(event) => handleTileKeyDown(event, tileId)}
+                              onPointerDown={(event) => beginTouchDragTracking(event, tileId)}
+                              onPointerMove={moveTouchDrag}
+                              onPointerUp={finishTouchDrag}
+                              onPointerCancel={cancelTouchDrag}
+                              onContextMenu={(event) => { if (isMyTurn) event.preventDefault(); }}
                               onDragStart={(event) => dragTileStart(event, tileId)}
                               onDragEnd={(event) => { event.stopPropagation(); finishDrag(); }}
                               onDrop={(event) => { event.stopPropagation(); drop(event, { type: "set", setId: set.id }); }}
@@ -2245,6 +2649,34 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
           </div>
         </section>
 
+        {showMoveFinder && (
+          <aside className="activity-panel move-finder-panel">
+            <div className="activity-heading"><Search /><div><span className="eyebrow">Rack + felt</span><h2>Move finder</h2></div></div>
+            <p className="assist-panel-copy">{isMyTurn
+              ? "Every result below is a complete play accepted by the same rules used for auto-draw. Nothing is committed automatically."
+              : "Stage a result as a pre-move. It plays automatically if the opponent’s turn leaves it legal."}</p>
+            {moveAnalysis?.legal ? (
+              <>
+                <p className="move-finder-status" role="status">{moveAnalysis.moves.length}{moveAnalysis.truncated ? "+" : ""} playable {moveAnalysis.moves.length === 1 ? "line" : "lines"} found.</p>
+                <ol className="move-finder-list">
+                  {moveAnalysis.moves.map((move, index) => (
+                    <li key={`${move.kind}-${index}`}>
+                      <div>
+                        <strong>{legalMoveKindLabel(move.kind)}</strong>
+                        <small>{move.playedTileIds.map(tileName).join(", ")}</small>
+                        {move.openingPoints > 0 && <small>Opening total: {move.openingPoints}</small>}
+                      </div>
+                      <button className="secondary-button" type="button" disabled={busy} onClick={() => stageLegalMove(move)}>{isMyTurn ? "Stage" : "Pre-move"}</button>
+                    </li>
+                  ))}
+                </ol>
+                {moveAnalysis.truncated && <p className="move-finder-note">Showing the first 24 lines. There may be more.</p>}
+              </>
+            ) : (
+              <p className="move-finder-empty" role="status">No move is possible from your rack and the current felt. {moveAnalysis?.reason ?? "Open a table to analyze it."}</p>
+            )}
+          </aside>
+        )}
         {showActivity && (
           <aside className="activity-panel">
             <div className="activity-heading"><History /><div><span className="eyebrow">Table talk</span><h2>Activity</h2></div></div>
@@ -2331,7 +2763,8 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
       <section className={`rack-zone ${isMyTurn ? "is-active" : ""}`}>
         <div className="rack-heading">
           <div className="rack-tools">
-            <div className="rack-sort-tools" aria-label="Rack sorting">
+            <div className="rack-secondary-tools">
+              <div className="rack-sort-tools" aria-label="Rack sorting">
               <button
                 type="button"
                 className={rackAutoSort && rackSortMode === "color-first" ? "is-active" : ""}
@@ -2356,14 +2789,21 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                   }}>{draggedItem?.type === "set" ? "Cancel set move" : "Clear selection"} <kbd aria-hidden="true">Esc</kbd></button>
                 </div>
               )}
-            </div>
-            {isMyTurn && (
-              <div className="rack-turn-tools" aria-label="Turn history">
-                <div className="turn-history-buttons">
-                  <button type="button" disabled={busy || turnHistoryIndex === 0} onClick={() => showTurnHistory(turnHistoryIndex - 1)} title="Go back one move" aria-label="Back one move" aria-keyshortcuts="Control+Z Meta+Z"><Undo2 /> Back <kbd aria-hidden="true">{shortcutModifier}Z</kbd></button>
-                  <button className="table-reset-button" type="button" disabled={busy || turnHistoryIndex === 0} onClick={resetDraft} title="Restore the table and rack to the start of your turn" aria-label="Reset turn" aria-keyshortcuts="Control+Shift+Backspace Meta+Shift+Backspace"><RotateCcw /> Reset <kbd aria-hidden="true">{shortcutModifier}⇧⌫</kbd></button>
-                  <button type="button" disabled={busy || turnHistoryIndex >= turnHistory.length - 1} onClick={() => showTurnHistory(turnHistoryIndex + 1)} title="Go forward one move" aria-label="Forward one move" aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z">Forward <kbd aria-hidden="true">{redoShortcut}</kbd> <Redo2 /></button>
+              </div>
+              {isMyTurn && (
+                <div className="rack-turn-tools" aria-label="Turn history">
+                  <div className="turn-history-buttons">
+                    <button type="button" disabled={busy || turnHistoryIndex === 0} onClick={() => showTurnHistory(turnHistoryIndex - 1)} title="Go back one move" aria-label="Back one move" aria-keyshortcuts="Control+Z Meta+Z"><Undo2 /> Back <kbd aria-hidden="true">{shortcutModifier}Z</kbd></button>
+                    <button className="table-reset-button" type="button" disabled={busy || turnHistoryIndex === 0} onClick={resetDraft} title="Restore the table and rack to the start of your turn" aria-label="Reset turn" aria-keyshortcuts="Control+Shift+Backspace Meta+Shift+Backspace"><RotateCcw /> Reset <kbd aria-hidden="true">{shortcutModifier}⇧⌫</kbd></button>
+                    <button type="button" disabled={busy || turnHistoryIndex >= turnHistory.length - 1} onClick={() => showTurnHistory(turnHistoryIndex + 1)} title="Go forward one move" aria-label="Forward one move" aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z">Forward <kbd aria-hidden="true">{redoShortcut}</kbd> <Redo2 /></button>
+                  </div>
                 </div>
+              )}
+            </div>
+            {!isMyTurn && game.myPreMove !== null && (
+              <div className="pre-move-status" role="status">
+                <span><Check aria-hidden="true" /> Pre-move staged</span>
+                <button className="secondary-button" type="button" disabled={busy} onClick={() => { void clearPreMove(); }}>Cancel</button>
               </div>
             )}
             {isMyTurn && (
@@ -2376,7 +2816,7 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
         </div>
 
         <div
-          className={`opening-meter ${openingPoints >= 30 ? "is-complete" : ""} ${me?.opened || !isMyTurn ? "layout-placeholder" : ""}`}
+          className={`opening-meter ${openingPoints >= 30 ? "is-complete" : ""} ${me?.opened ? "is-opened" : ""} ${me?.opened || !isMyTurn ? "layout-placeholder" : ""}`}
           aria-hidden={me?.opened || !isMyTurn}
         ><span style={{ width: `${Math.min(100, (openingPoints / 30) * 100)}%` }} /><b>Opening set: {openingPoints} / 30</b></div>
 
@@ -2462,9 +2902,10 @@ export function Game({ session, onExit, onSessionMissing, onShowRules }: GamePro
                     onFocus={() => handleTileFocus(tile.id)}
                     onKeyDown={(event) => handleTileKeyDown(event, tile.id)}
                     onDoubleClick={() => handleRackTileDoubleClick(tile.id)}
-                    onPointerDown={(event) => beginRackHold(event, tile.id)}
-                    onPointerUp={cancelRackHold}
-                    onPointerCancel={cancelRackHold}
+                    onPointerDown={(event) => { beginTouchDragTracking(event, tile.id); beginRackHold(event, tile.id); }}
+                    onPointerMove={moveTouchDrag}
+                    onPointerUp={(event) => { finishTouchDrag(event); cancelRackHold(); }}
+                    onPointerCancel={() => { cancelTouchDrag(); cancelRackHold(); }}
                     onPointerLeave={cancelRackHold}
                     onContextMenu={(event) => { if (isMyTurn) event.preventDefault(); }}
                     onDragStart={(event) => dragTileStart(event, tile.id)}

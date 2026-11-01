@@ -20,6 +20,7 @@ import type {
   AssistPolicy,
   AssistPolicyMap,
   GameEvent,
+  GameSet,
   PublicGameState,
   PublicPlayer,
   RoomResult,
@@ -115,7 +116,7 @@ function upgradeStoredGame(value: unknown): unknown {
     pool: upgradeTileIds(value.pool),
     board: upgradeBoard(value.board),
     tiles: upgradeTiles(value.tiles),
-    turnDraft: isRecord(value.turnDraft)
+      turnDraft: isRecord(value.turnDraft)
       ? { ...value.turnDraft, board: upgradeBoard(value.turnDraft.board) }
       : value.turnDraft ?? null,
     players: value.players.map((player) => {
@@ -129,6 +130,7 @@ function upgradeStoredGame(value: unknown): unknown {
       return {
         ...player,
         rack: upgradeTileIds(player.rack),
+        rejoinTokenHash: typeof player.rejoinTokenHash === "string" ? player.rejoinTokenHash : null,
         isComputer,
         computerStrategy,
         enabledAssists: normalizeEnabledAssists(
@@ -137,6 +139,15 @@ function upgradeStoredGame(value: unknown): unknown {
             : player.enabledAssists,
           assistPolicy,
         ),
+        preMove: isRecord(player.preMove)
+          && Array.isArray(player.preMove.board)
+          && Array.isArray(player.preMove.baseBoard)
+          ? {
+              ...player.preMove,
+              board: upgradeBoard(player.preMove.board),
+              baseBoard: upgradeBoard(player.preMove.baseBoard),
+            }
+          : null,
       };
     }),
   };
@@ -163,6 +174,47 @@ function secureShuffle(values: string[]): string[] {
 
 function tileNumber(tileId: string, tiles: Record<string, Tile>): number {
   return tiles[tileId]?.value ?? 0;
+}
+
+function tileMembershipKey(tileIds: string[]): string {
+  return [...tileIds].sort().join("|");
+}
+
+function preMoveBoardForPosition(
+  currentBoard: GameSet[],
+  preMove: NonNullable<StoredPlayer["preMove"]>,
+): GameSet[] | null {
+  const plannedBoard = preMove.board;
+  const baseBoard = preMove.baseBoard;
+  const plannedKeys = new Set(plannedBoard.map((set) => tileMembershipKey(set.tileIds)));
+  const affectedBaseTileIds = new Set(
+    baseBoard
+      .filter((set) => !plannedKeys.has(tileMembershipKey(set.tileIds)))
+      .flatMap((set) => set.tileIds),
+  );
+
+  // A changed set that the pre-move depended on invalidates the pre-move.
+  // Unaffected sets, including new sets from the opponent, are carried into
+  // the planned board below.
+  for (const baseSet of baseBoard) {
+    if (!affectedBaseTileIds.has(baseSet.tileIds[0] ?? "")) continue;
+    const currentSet = currentBoard.find((set) =>
+      set.tileIds.some((tileId) => baseSet.tileIds.includes(tileId)),
+    );
+    if (!currentSet || tileMembershipKey(currentSet.tileIds) !== tileMembershipKey(baseSet.tileIds)) {
+      return null;
+    }
+  }
+
+  const plannedTableTileIds = new Set(baseBoard.flatMap((set) => set.tileIds));
+  const adjustedPlannedBoard = plannedBoard.filter((set) =>
+    set.tileIds.some((tileId) => affectedBaseTileIds.has(tileId))
+    || !set.tileIds.some((tileId) => plannedTableTileIds.has(tileId)),
+  );
+  const currentUnaffectedBoard = currentBoard.filter((set) =>
+    !set.tileIds.some((tileId) => affectedBaseTileIds.has(tileId)),
+  );
+  return [...adjustedPlannedBoard, ...currentUnaffectedBoard];
 }
 
 export function chooseStartingPlayerIndex(
@@ -195,9 +247,14 @@ async function hashToken(token: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function tokenMatches(token: string, expectedHash: string): Promise<boolean> {
+async function tokenMatches(token: string, expectedHashes: readonly string[]): Promise<boolean> {
   const actualHash = await hashToken(token);
-  return crypto.subtle.timingSafeEqual(hexToBytes(actualHash), hexToBytes(expectedHash));
+  const actualBytes = hexToBytes(actualHash);
+  let matches = false;
+  for (const expectedHash of expectedHashes) {
+    matches = crypto.subtle.timingSafeEqual(actualBytes, hexToBytes(expectedHash)) || matches;
+  }
+  return matches;
 }
 
 function publicError(error: unknown): string {
@@ -259,7 +316,12 @@ export class GameRoom extends DurableObject<Env> {
 
   private async authenticated(token: string, player: StoredPlayer): Promise<boolean> {
     if (player.isComputer || !token || token.length > 256) return false;
-    return tokenMatches(token, player.tokenHash);
+    return tokenMatches(
+      token,
+      player.rejoinTokenHash === null
+        ? [player.tokenHash]
+        : [player.tokenHash, player.rejoinTokenHash],
+    );
   }
 
   private playerFor(state: StoredGame, playerId: string): StoredPlayer {
@@ -339,6 +401,7 @@ export class GameRoom extends DurableObject<Env> {
       assistPolicy: state.assistPolicy,
       enabledAssists: me.enabledAssists,
       noMovePossible: this.noMovePossible(state, me),
+      myPreMove: me.preMove?.board ?? null,
     };
     if (!validators.publicGameState(view)) {
       throw new Error(`Invalid public game state: ${describeValidationErrors(validators.publicGameState.errors)}`);
@@ -381,6 +444,27 @@ export class GameRoom extends DurableObject<Env> {
     state.turnIndex = (state.turnIndex + 1) % state.players.length;
     state.turnStartedAt = Date.now();
     state.turnDeadline = state.turnStartedAt + turnDuration(state.mode, state.turnDurationMs);
+
+    const nextPlayer = state.players[state.turnIndex];
+    const preMove = nextPlayer?.preMove;
+    if (!nextPlayer || !preMove) return;
+
+    // A pre-move is evaluated against the board after the previous player has
+    // finished. This makes it safe to apply automatically while still
+    // abandoning it when that move changed one of the melds it relied on.
+    nextPlayer.preMove = null;
+    const adjustedBoard = preMoveBoardForPosition(state.board, preMove);
+    if (!adjustedBoard) return;
+    const validation = validateTurn({
+      previousBoard: state.board,
+      proposedBoard: adjustedBoard,
+      rack: nextPlayer.rack,
+      opened: nextPlayer.opened,
+      tiles: state.tiles,
+    });
+    if (validation.valid) {
+      this.applyTurnAction(state, nextPlayer, { type: "commit", board: adjustedBoard });
+    }
   }
 
   private calculateScores(state: StoredGame, winnerId: string): Record<string, number> {
@@ -511,12 +595,14 @@ export class GameRoom extends DurableObject<Env> {
         id: playerId,
         name: input.name,
         tokenHash,
+        rejoinTokenHash: null,
         rack: [],
         opened: false,
         joinedAt: now,
         isComputer: false,
         computerStrategy: null,
         enabledAssists: enabledAssistsForPolicy(assistPolicy),
+        preMove: null,
       }],
       pool: [],
       board: [],
@@ -545,12 +631,14 @@ export class GameRoom extends DurableObject<Env> {
       id: playerId,
       name,
       tokenHash,
+      rejoinTokenHash: null,
       rack: [],
       opened: false,
       joinedAt: Date.now(),
       isComputer: false,
       computerStrategy: null,
       enabledAssists: enabledAssistsForPolicy(state.assistPolicy),
+      preMove: null,
     });
     state.version += 1;
     state.updatedAt = Date.now();
@@ -581,18 +669,56 @@ export class GameRoom extends DurableObject<Env> {
       id: computerId,
       name,
       tokenHash: computerTokenHash,
+      rejoinTokenHash: null,
       rack: [],
       opened: false,
       joinedAt: Date.now(),
       isComputer: true,
       computerStrategy: strategy,
       enabledAssists: [],
+      preMove: null,
     });
     state.version += 1;
     state.updatedAt = Date.now();
     this.addHistory(state, event("joined", `${name} joined with the ${strategy} strategy.`, computerId));
     this.persist(state);
     this.broadcast(state);
+    return { ok: true };
+  }
+
+  async setPlayerRejoinToken(
+    hostPlayerId: string,
+    hostToken: string,
+    targetPlayerId: string,
+    rejoinTokenHash: string,
+  ): Promise<RoomResult> {
+    const beforeAuth = this.load();
+    if (!beforeAuth) return { ok: false, error: "Room not found." };
+    const host = beforeAuth.players.find((player) => player.id === hostPlayerId);
+    if (!host || !(await this.authenticated(hostToken, host))) {
+      return { ok: false, error: "That player link is not valid." };
+    }
+
+    const current = this.load();
+    if (!current) return { ok: false, error: "Room not found." };
+    if (current.hostPlayerId !== hostPlayerId) {
+      return { ok: false, error: "Only the host can create rejoin links." };
+    }
+    if (targetPlayerId === hostPlayerId) {
+      return { ok: false, error: "Use your own player link for the host seat." };
+    }
+    if (!/^[a-f0-9]{64}$/.test(rejoinTokenHash)) {
+      return { ok: false, error: "That rejoin credential is not valid." };
+    }
+
+    const state = structuredClone(current);
+    const target = state.players.find((player) => player.id === targetPlayerId);
+    if (!target) return { ok: false, error: "Player not found in this room." };
+    if (target.isComputer) return { ok: false, error: "Computer players cannot use rejoin links." };
+
+    target.rejoinTokenHash = rejoinTokenHash;
+    state.updatedAt = Date.now();
+    this.persist(state);
     return { ok: true };
   }
 
@@ -868,7 +994,46 @@ export class GameRoom extends DurableObject<Env> {
     const state = structuredClone(current);
     if (state.status !== "playing") return { ok: false, error: "The game is not in progress." };
     const currentPlayer = state.players[state.turnIndex];
-    if (!currentPlayer || currentPlayer.id !== playerId) return { ok: false, error: "It is not your turn." };
+    if (!currentPlayer) return { ok: false, error: "The current player could not be found." };
+    const player = this.playerFor(state, playerId);
+    if (player.isComputer) return { ok: false, error: "Computer turns are controlled by their strategy." };
+
+    if (input.clearPreMove) {
+      if (currentPlayer.id === playerId) return { ok: false, error: "You are already on the clock." };
+      if (player.preMove === null) return { ok: true };
+      player.preMove = null;
+      this.persist(state);
+      this.broadcast(state);
+      return { ok: true };
+    }
+
+    if (input.preMove) {
+      if (currentPlayer.id === playerId) return { ok: false, error: "You cannot pre-move during your turn." };
+      if (state.turnStartedAt !== input.turnStartedAt) return { ok: false, error: "That turn has already ended." };
+      if (state.turnDeadline === null || state.turnDeadline <= Date.now()) {
+        return { ok: false, error: "The turn clock has already expired." };
+      }
+
+      const validation = validateTurn({
+        previousBoard: state.board,
+        proposedBoard: input.board,
+        rack: player.rack,
+        opened: player.opened,
+        tiles: state.tiles,
+      });
+      if (!validation.valid) {
+        return { ok: false, error: validation.reason ?? "That pre-move is not legal." };
+      }
+      player.preMove = {
+        board: input.board.map((set) => ({ ...set, tileIds: [...set.tileIds] })),
+        baseBoard: state.board.map((set) => ({ ...set, tileIds: [...set.tileIds] })),
+      };
+      this.persist(state);
+      this.broadcast(state);
+      return { ok: true };
+    }
+
+    if (currentPlayer.id !== playerId) return { ok: false, error: "It is not your turn." };
     if (currentPlayer.isComputer) return { ok: false, error: "Computer turns are controlled by their strategy." };
     if (state.turnStartedAt !== input.turnStartedAt) return { ok: false, error: "That turn has already ended." };
     if (state.turnDeadline === null || state.turnDeadline <= Date.now()) {
@@ -889,6 +1054,7 @@ export class GameRoom extends DurableObject<Env> {
       sequence: input.sequence,
       board: input.board.map((set) => ({ ...set, tileIds: [...set.tileIds] })),
     };
+    currentPlayer.preMove = null;
     this.persist(state);
     this.broadcast(state);
     return { ok: true };

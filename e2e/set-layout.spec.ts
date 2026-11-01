@@ -304,7 +304,7 @@ test("uses stable board order and vertical-first placement across resizes", asyn
   expectNoScrolling(packedLayout);
 });
 
-test("shrinks a worst-case-like draft to prevent board or document scrolling", async ({ page, request }) => {
+test("shrinks a crowded felt on a phone so every set stays visible without scrolling", async ({ page, request }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await startTwoPlayerGame(page, request);
@@ -317,7 +317,7 @@ test("shrinks a worst-case-like draft to prevent board or document scrolling", a
   expectCenteredAndContained(roomyLayout);
   expectNoScrolling(roomyLayout);
   await expectTilesClearDrawPile(page);
-  const roomyTileWidth = roomyLayout.sets[0]!.width;
+  const roomySetWidth = roomyLayout.sets[0]!.width;
 
   await page.setViewportSize({ width: 360, height: 650 });
   await expect.poll(async () => Number(await page.locator(".set-grid").getAttribute("data-felt-scale")))
@@ -325,15 +325,23 @@ test("shrinks a worst-case-like draft to prevent board or document scrolling", a
   await settleFeltLayout(page);
   const constrainedLayout = await readSetLayout(page);
   expect(constrainedLayout.sets).toHaveLength(14);
-  expect(constrainedLayout.scale, "the engine should reduce tile scale before introducing scrolling")
-    .toBeLessThan(1);
-  expect(constrainedLayout.sets[0]!.width, "rendered sets should actually shrink with the scale")
-    .toBeLessThan(roomyTileWidth);
-  expect(constrainedLayout.rowCount, "the constrained layout should still avoid excessive rows")
-    .toBeLessThanOrEqual(4);
-  expectCenteredAndContained(constrainedLayout, false);
+  expect(constrainedLayout.scale, "phone sets should shrink instead of scrolling").toBeLessThan(1);
+  expect(constrainedLayout.sets[0]!.width, "phone sets should be smaller than on the desktop felt")
+    .toBeLessThan(roomySetWidth);
+  expect(constrainedLayout.grid.width, "the felt canvas should stay inside its viewport")
+    .toBeLessThanOrEqual(constrainedLayout.board.width + edgeTolerancePx);
+  expectCenteredAndContained(constrainedLayout);
   expectNoScrolling(constrainedLayout);
   await expectTilesClearDrawPile(page);
+
+  const feltScroll = await page.locator(".sets").evaluate((felt) => ({
+    clientHeight: felt.clientHeight,
+    clientWidth: felt.clientWidth,
+    scrollHeight: felt.scrollHeight,
+    scrollWidth: felt.scrollWidth,
+  }));
+  expect(feltScroll.scrollWidth).toBeLessThanOrEqual(feltScroll.clientWidth + edgeTolerancePx);
+  expect(feltScroll.scrollHeight).toBeLessThanOrEqual(feltScroll.clientHeight + edgeTolerancePx);
 
   await page.evaluate(() => window.scrollTo({ left: 10_000, top: 10_000 }));
   expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY })))

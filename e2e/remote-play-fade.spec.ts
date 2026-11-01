@@ -87,6 +87,7 @@ function createState(remoteIsComputer: boolean): PublicGameState {
     myRack,
     turnDraft: null,
     myTurnDraft: null,
+    myPreMove: null,
     tiles,
     history: [
       {

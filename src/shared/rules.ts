@@ -43,6 +43,22 @@ export interface LegalMoveParams {
   tiles: Record<string, Tile>;
 }
 
+export type LegalMoveKind = "opening" | "rack-set" | "table-extension" | "rearrangement";
+
+export interface LegalMove {
+  board: GameSet[];
+  playedTileIds: string[];
+  openingPoints: number;
+  kind: LegalMoveKind;
+}
+
+export interface LegalMoveAnalysis {
+  legal: boolean;
+  moves: LegalMove[];
+  truncated: boolean;
+  reason: string | null;
+}
+
 interface SetCandidate {
   tileIds: string[];
   points: number;
@@ -389,15 +405,6 @@ function collectLegalSets(
   return [...candidates.values()];
 }
 
-function hasSetUsingRackTile(params: LegalMoveParams): boolean {
-  const tableIds = params.board.flatMap((set) => set.tileIds);
-  return collectLegalSets(
-    [...new Set([...tableIds, ...params.rack])],
-    params.tiles,
-    { mustIncludeOneOf: new Set(params.rack), stopAfterFirst: true },
-  ).length > 0;
-}
-
 function setCandidates(params: LegalMoveParams): SetCandidate[] {
   const tableIds = params.board.flatMap((set) => set.tileIds);
   const allIds = [...new Set([...tableIds, ...params.rack])];
@@ -419,27 +426,261 @@ function setCandidates(params: LegalMoveParams): SetCandidate[] {
   });
 }
 
-function canOpenWithCandidates(candidates: SetCandidate[]): boolean {
-  const rackCandidates = candidates
-    .filter((candidate) => candidate.tableMask === 0n && candidate.rackMask !== 0n)
-    .sort((left, right) => right.points - left.points);
-  if (rackCandidates.some((candidate) => candidate.points >= INITIAL_SET_MINIMUM)) return true;
+export interface LegalMoveSearchOptions {
+  maxMoves?: number;
+}
 
-  const seen = new Set<string>();
-  const search = (start: number, usedMask: bigint, points: number): boolean => {
-    const key = `${start}:${usedMask}:${points}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    for (let index = start; index < rackCandidates.length; index += 1) {
-      const candidate = rackCandidates[index];
-      if (!candidate || (candidate.mask & usedMask) !== 0n) continue;
-      const nextPoints = points + candidate.points;
-      if (nextPoints >= INITIAL_SET_MINIMUM) return true;
-      if (search(index + 1, usedMask | candidate.mask, nextPoints)) return true;
+function boardMembershipKey(tileIds: string[]): string {
+  return [...tileIds].sort().join("|");
+}
+
+function boardKey(board: GameSet[]): string {
+  return board.map((set) => boardMembershipKey(set.tileIds)).sort().join("||");
+}
+
+function boardFromCandidates(candidates: SetCandidate[], originalBoard: GameSet[]): GameSet[] {
+  const originalByMembership = new Map<string, GameSet[]>();
+  for (const set of originalBoard) {
+    const matches = originalByMembership.get(boardMembershipKey(set.tileIds)) ?? [];
+    matches.push(set);
+    originalByMembership.set(boardMembershipKey(set.tileIds), matches);
+  }
+
+  return candidates.map((candidate, index) => {
+    const membership = boardMembershipKey(candidate.tileIds);
+    const matchingOriginals = originalByMembership.get(membership);
+    const original = matchingOriginals?.shift();
+    return {
+      id: original?.id ?? `analysis-${index + 1}`,
+      tileIds: [...candidate.tileIds],
+    };
+  });
+}
+
+/**
+ * Enumerates playable boards from the current rack and felt. The search is
+ * deliberately shared by the server's auto-draw decision and diagnostics so
+ * a boolean answer can never disagree with the move it claims to represent.
+ *
+ * `maxMoves` limits only the returned explanations; `truncated` tells callers
+ * that more legal boards may exist. The default is enough for a useful move
+ * finder while the server passes 1 for a cheap existence check.
+ */
+export function findLegalMoves(
+  params: LegalMoveParams,
+  options: LegalMoveSearchOptions = {},
+): LegalMoveAnalysis {
+  const maxMoves = Math.max(1, options.maxMoves ?? 50);
+  const moves: LegalMove[] = [];
+  const seenBoards = new Set<string>();
+  let truncated = false;
+
+  const addMove = (candidateSets: SetCandidate[], kind: LegalMoveKind): void => {
+    const board = boardFromCandidates(candidateSets, params.board);
+    const key = boardKey(board);
+    if (seenBoards.has(key)) return;
+    const validation = validateTurn({
+      previousBoard: params.board,
+      proposedBoard: board,
+      rack: params.rack,
+      opened: params.opened,
+      tiles: params.tiles,
+    });
+    if (!validation.valid) return;
+    if (moves.length >= maxMoves) {
+      truncated = true;
+      return;
     }
-    return false;
+    seenBoards.add(key);
+    moves.push({
+      board,
+      playedTileIds: validation.playedTileIds,
+      openingPoints: validation.openingPoints,
+      kind,
+    });
   };
-  return search(0, 0n, 0);
+
+  const originalBoardCandidates = params.board.map((set) => ({
+    tileIds: [...set.tileIds],
+    points: validateSet(set.tileIds, params.tiles).points,
+    mask: 0n,
+    tableMask: 0n,
+    rackMask: 0n,
+  }));
+
+  if (params.rack.length === 0) {
+    return { legal: false, moves, truncated: false, reason: "Your rack is empty." };
+  }
+
+  const rackCandidates = setCandidates({ ...params, board: [] })
+    .filter((candidate) => candidate.tableMask === 0n && candidate.rackMask !== 0n)
+    .sort((left, right) => right.points - left.points || right.tileIds.length - left.tileIds.length);
+
+  if (!params.opened) {
+    const searchOpening = (start: number, usedMask: bigint, points: number, selected: SetCandidate[]): void => {
+      for (let index = start; index < rackCandidates.length; index += 1) {
+        const candidate = rackCandidates[index];
+        if (!candidate || (candidate.mask & usedMask) !== 0n) continue;
+        const nextSelected = [...selected, candidate];
+        const nextPoints = points + candidate.points;
+        if (nextPoints >= INITIAL_SET_MINIMUM) {
+          addMove([...originalBoardCandidates, ...nextSelected], "opening");
+        }
+        if (moves.length >= maxMoves) {
+          truncated = true;
+          return;
+        }
+        searchOpening(index + 1, usedMask | candidate.mask, nextPoints, nextSelected);
+        if (moves.length >= maxMoves) return;
+      }
+    };
+    searchOpening(0, 0n, 0, []);
+    return {
+      legal: moves.length > 0,
+      moves,
+      truncated,
+      reason: moves.length > 0 ? null : `No rack-only combination reaches ${INITIAL_SET_MINIMUM} points.`,
+    };
+  }
+
+  // A new rack-only set is legal for an opened player.
+  for (const candidate of rackCandidates) {
+    addMove([...originalBoardCandidates, candidate], "rack-set");
+    if (moves.length >= maxMoves) {
+      return { legal: true, moves, truncated: true, reason: null };
+    }
+  }
+
+  // Fast path for the common case where a tile joins one existing set.
+  for (const rackTileId of params.rack) {
+    for (const existingSet of params.board) {
+      for (let index = 0; index <= existingSet.tileIds.length; index += 1) {
+        const tileIds = [...existingSet.tileIds];
+        tileIds.splice(index, 0, rackTileId);
+        if (!validateSet(tileIds, params.tiles).valid) continue;
+        const candidate: SetCandidate = {
+          tileIds,
+          points: validateSet(tileIds, params.tiles).points,
+          mask: 0n,
+          tableMask: 0n,
+          rackMask: 0n,
+        };
+        addMove(
+          params.board.map((set) => set === existingSet ? candidate : {
+            tileIds: [...set.tileIds],
+            points: validateSet(set.tileIds, params.tiles).points,
+            mask: 0n,
+            tableMask: 0n,
+            rackMask: 0n,
+          }),
+          "table-extension",
+        );
+        if (moves.length >= maxMoves) {
+          return { legal: true, moves, truncated: true, reason: null };
+        }
+      }
+    }
+  }
+
+  const tableIds = params.board.flatMap((set) => set.tileIds);
+  if (tableIds.length === 0) {
+    return {
+      legal: moves.length > 0,
+      moves,
+      truncated,
+      reason: moves.length > 0 ? null : "No rack tile can form a valid set.",
+    };
+  }
+
+  // Search exact covers of every tile already on the felt. The previous
+  // implementation covered the union of candidate table tiles; using the
+  // actual table mask makes the invariant explicit and protects this check if
+  // candidate generation is ever narrowed in the future.
+  const candidates = setCandidates(params);
+  const allIds = [...new Set([...tableIds, ...params.rack])];
+  const bitById = new Map(allIds.map((tileId, index) => [tileId, 1n << BigInt(index)]));
+  const tableMaskById = new Map(tableIds.map((tileId) => [tileId, bitById.get(tileId) ?? 0n]));
+  const allTableMask = tableIds.reduce((mask, tileId) => mask | (tableMaskById.get(tileId) ?? 0n), 0n);
+  const candidatesWithMasks = candidates.map((candidate) => {
+    let tableMask = 0n;
+    let mask = 0n;
+    let rackMask = 0n;
+    for (const tileId of candidate.tileIds) {
+      const bit = bitById.get(tileId) ?? 0n;
+      mask |= bit;
+      if (tableMaskById.has(tileId)) tableMask |= bit;
+      if (params.rack.includes(tileId)) rackMask |= bit;
+    }
+    return { ...candidate, mask, tableMask, rackMask };
+  });
+  const candidatesByTableBit = new Map<bigint, SetCandidate[]>();
+  for (const candidate of candidatesWithMasks) {
+    for (const tableTileId of tableIds) {
+      const bit = tableMaskById.get(tableTileId) ?? 0n;
+      if ((candidate.tableMask & bit) === 0n) continue;
+      const matching = candidatesByTableBit.get(bit) ?? [];
+      matching.push(candidate);
+      candidatesByTableBit.set(bit, matching);
+    }
+  }
+
+  const roots = candidatesWithMasks
+    .filter((candidate) => candidate.rackMask !== 0n && candidate.tableMask !== 0n)
+    .sort((left, right) => Number(left.tableMask !== 0n) - Number(right.tableMask !== 0n));
+  const failed = new Set<string>();
+
+  const coverRemainingTable = (
+    coveredTableMask: bigint,
+    usedMask: bigint,
+    selected: SetCandidate[],
+  ): void => {
+    if (moves.length >= maxMoves) {
+      truncated = true;
+      return;
+    }
+    if (coveredTableMask === allTableMask) {
+      addMove(selected, "rearrangement");
+      return;
+    }
+    const cacheKey = `${coveredTableMask}:${usedMask}`;
+    if (failed.has(cacheKey)) return;
+
+    let bestOptions: SetCandidate[] | null = null;
+    for (const tableTileId of tableIds) {
+      const bit = tableMaskById.get(tableTileId) ?? 0n;
+      if ((coveredTableMask & bit) !== 0n) continue;
+      const optionsForTile = (candidatesByTableBit.get(bit) ?? []).filter(
+        (candidate) => (candidate.mask & usedMask) === 0n,
+      );
+      if (optionsForTile.length === 0) {
+        failed.add(cacheKey);
+        return;
+      }
+      if (!bestOptions || optionsForTile.length < bestOptions.length) bestOptions = optionsForTile;
+    }
+
+    for (const candidate of bestOptions ?? []) {
+      coverRemainingTable(
+        coveredTableMask | candidate.tableMask,
+        usedMask | candidate.mask,
+        [...selected, candidate],
+      );
+      if (moves.length >= maxMoves) return;
+    }
+    failed.add(cacheKey);
+  };
+
+  for (const root of roots) {
+    coverRemainingTable(root.tableMask, root.mask, [root]);
+    if (moves.length >= maxMoves) break;
+  }
+
+  return {
+    legal: moves.length > 0,
+    moves,
+    truncated,
+    reason: moves.length > 0 ? null : "No rack tile can make a valid set on the felt or rearrange the felt into valid sets.",
+  };
 }
 
 /**
@@ -448,81 +689,7 @@ function canOpenWithCandidates(candidates: SetCandidate[]): boolean {
  * even when no rack tile can simply be appended to an existing set.
  */
 export function hasLegalMove(params: LegalMoveParams): boolean {
-  if (params.rack.length === 0) return false;
-  const rackCandidates = setCandidates({ ...params, board: [] });
-  if (!params.opened) return canOpenWithCandidates(rackCandidates);
-  if (rackCandidates.length > 0) return true;
-
-  const tableIds = params.board.flatMap((set) => set.tileIds);
-  if (tableIds.length === 0) return false;
-
-  for (const rackTileId of params.rack) {
-    for (const set of params.board) {
-      for (let index = 0; index <= set.tileIds.length; index += 1) {
-        const tileIds = [...set.tileIds];
-        tileIds.splice(index, 0, rackTileId);
-        if (validateSet(tileIds, params.tiles).valid) return true;
-      }
-    }
-  }
-
-  if (!hasSetUsingRackTile(params)) return false;
-
-  const candidates = setCandidates(params);
-
-  const allTableMask = candidates.reduce((mask, candidate) => mask | candidate.tableMask, 0n);
-  const originalSetKeys = new Set(params.board.map((set) => [...set.tileIds].sort().join("|")));
-  const orderedCandidates = [...candidates].sort((left, right) => {
-    const leftOriginal = originalSetKeys.has([...left.tileIds].sort().join("|")) ? 1 : 0;
-    const rightOriginal = originalSetKeys.has([...right.tileIds].sort().join("|")) ? 1 : 0;
-    return rightOriginal - leftOriginal || Number(left.rackMask !== 0n) - Number(right.rackMask !== 0n);
-  });
-  const candidatesByTableBit = new Map<bigint, SetCandidate[]>();
-  for (const candidate of orderedCandidates) {
-    for (let bitIndex = 0; bitIndex < TILE_SET_SIZE; bitIndex += 1) {
-      const bit = 1n << BigInt(bitIndex);
-      if ((candidate.tableMask & bit) === 0n) continue;
-      const matching = candidatesByTableBit.get(bit) ?? [];
-      matching.push(candidate);
-      candidatesByTableBit.set(bit, matching);
-    }
-  }
-
-  const roots = orderedCandidates
-    .filter((candidate) => candidate.rackMask !== 0n)
-    .sort((left, right) => Number(left.tableMask !== 0n) - Number(right.tableMask !== 0n));
-  const failed = new Set<string>();
-
-  const coverRemainingTable = (coveredTableMask: bigint, usedMask: bigint): boolean => {
-    if (coveredTableMask === allTableMask) return true;
-    const cacheKey = `${coveredTableMask}:${usedMask}`;
-    if (failed.has(cacheKey)) return false;
-
-    let bestOptions: SetCandidate[] | null = null;
-    for (let bitIndex = 0; bitIndex < TILE_SET_SIZE; bitIndex += 1) {
-      const bit = 1n << BigInt(bitIndex);
-      if ((allTableMask & bit) === 0n || (coveredTableMask & bit) !== 0n) continue;
-      const options = (candidatesByTableBit.get(bit) ?? []).filter(
-        (candidate) => (candidate.mask & usedMask) === 0n,
-      );
-      if (options.length === 0) {
-        failed.add(cacheKey);
-        return false;
-      }
-      if (!bestOptions || options.length < bestOptions.length) bestOptions = options;
-    }
-
-    for (const candidate of bestOptions ?? []) {
-      if (coverRemainingTable(coveredTableMask | candidate.tableMask, usedMask | candidate.mask)) return true;
-    }
-    failed.add(cacheKey);
-    return false;
-  };
-
-  for (const root of roots) {
-    if (coverRemainingTable(root.tableMask, root.mask)) return true;
-  }
-  return false;
+  return findLegalMoves(params, { maxMoves: 1 }).legal;
 }
 
 export function rackPenalty(rack: string[], tiles: Record<string, Tile>): number {

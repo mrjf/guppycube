@@ -94,6 +94,21 @@ describe("rack layout", () => {
     expect(rackSlotRows(moved)[1]!.slice(0, 2)).toEqual(["a", "b"]);
   });
 
+  it("keeps a multi-tile self-drop unchanged when targeting any selected tile", () => {
+    const initial = createRackLayout(["a", "b", "c", "d", "e", "f"]);
+
+    for (const side of ["before", "after"] as const) {
+      const moved = placeRackTilesAtSlot(
+        initial,
+        ["a", "b", "c"],
+        rackSlotIndex(0, 1),
+        side,
+      );
+
+      expect(moved).toEqual(initial);
+    }
+  });
+
   it("adds columns without changing existing slot coordinates", () => {
     const initial = placeRackTilesAtSlot(createRackLayout(["a"]), ["a"], rackSlotIndex(1, 6));
     const expanded = reconcileRackLayout(initial, Array.from({ length: 15 }, (_, index) => index === 0 ? "a" : `tile-${index}`));

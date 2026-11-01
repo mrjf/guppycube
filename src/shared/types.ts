@@ -8,6 +8,7 @@ export {
   WILCARD_TILE_COUNT,
 } from "../schemas";
 export { ASSIST_DEFINITIONS, ASSIST_IDS, ASSIST_POLICIES } from "./assists";
+export type { LegalMove, LegalMoveAnalysis, LegalMoveKind, LegalMoveParams, LegalMoveSearchOptions } from "./rules";
 export type {
   AddComputerInput,
   ApiError,

@@ -51,6 +51,14 @@ export async function getPlayerLink(session: GameSession): Promise<PlayerLink> {
   return request(gameApiPath(`/api/games/${session.roomCode}/link`), validators.playerLink);
 }
 
+export async function getPlayerRejoinLink(session: GameSession, playerId: string): Promise<PlayerLink> {
+  return request(
+    gameApiPath(`/api/games/${session.roomCode}/players/${encodeURIComponent(playerId)}/rejoin-link`),
+    validators.playerLink,
+    { method: "POST" },
+  );
+}
+
 export async function createGame(input: CreateGameInput): Promise<GameSession> {
   return request(appPath("/api/games"), validators.gameSession, {
     method: "POST",

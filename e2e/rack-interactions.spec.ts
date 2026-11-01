@@ -417,10 +417,24 @@ test("keeps manual slots at a fixed pitch, rearranges while waiting, persists th
     const numberButton = page.getByRole("button", { name: "123 → Color", exact: true });
     await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
 
+    await (rackGame.linked.sortMode === "color-first" ? colorButton : numberButton).click();
     const initialSortedLayout = await rackSlotSnapshot(page);
     const initialSortedSlotCount = await page.locator(".rack-slot").count();
     const sameSlotTile = page.locator(".rack .tile").first();
     await dragRackTileToSlot(page, sameSlotTile, sameSlotTile.locator(".."));
+    await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
+    expect(await page.locator(".rack-slot").count()).toBe(initialSortedSlotCount);
+    expect(await rackSlotSnapshot(page)).toEqual(initialSortedLayout);
+
+    const linkedTile = page.locator(`.rack .tile[data-tile-id="${rackGame.linked.heldId}"]`);
+    await linkedTile.focus();
+    await page.keyboard.press("Shift+Enter");
+    await expect(page.locator('.rack .tile[aria-pressed="true"]'))
+      .toHaveCount(rackGame.linked.tileIds.length);
+    const selectedSelfDropId = rackGame.linked.tileIds[1];
+    expect(selectedSelfDropId).toBeDefined();
+    const selectedSelfDropTile = page.locator(`.rack .tile[data-tile-id="${selectedSelfDropId}"]`);
+    await dragRackTileToSlot(page, selectedSelfDropTile, selectedSelfDropTile.locator(".."));
     await expect(page.getByRole("grid", { name: "Your rack, autosorted" })).toBeVisible();
     expect(await page.locator(".rack-slot").count()).toBe(initialSortedSlotCount);
     expect(await rackSlotSnapshot(page)).toEqual(initialSortedLayout);
@@ -570,6 +584,7 @@ test("keeps manual slots at a fixed pitch, rearranges while waiting, persists th
     }).toEqual(outOfTurnLayout);
 
     await page.reload();
+    await expect(page.getByRole("grid", { name: "Your rack, manual arrangement" })).toBeVisible();
     await expect(page.getByText("Your turn", { exact: true })).not.toBeVisible();
     expect(await rackSlotSnapshot(page)).toEqual(outOfTurnLayout);
 

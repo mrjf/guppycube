@@ -1,0 +1,565 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1BDBE135399404D429E95A8C /* NavigationPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CA836754D0E65C704872937 /* NavigationPolicyTests.swift */; };
+		20E2B208C50B5D2227B9E78A /* GameBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D099D0930A4E1CBB613F00E7 /* GameBrowserView.swift */; };
+		3470D96855C120718F745D4A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E715D8CB3CF41574760EADEA /* Assets.xcassets */; };
+		7424AB8D8B5F06864F673729 /* GameBrowserModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 523C59740F64FDB2B1008123 /* GameBrowserModel.swift */; };
+		8203325862B4C82AF13D92E4 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC5CCFD6F7507B4F562A902 /* AppConfiguration.swift */; };
+		8FB90CC8BF3E430FD60F83F7 /* GuppycubeLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD8C8A7850D88FEABA48C59 /* GuppycubeLaunchTests.swift */; };
+		BD7227ADD59C48861E87EE74 /* NavigationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3FF5FD9475C0891E9320F49 /* NavigationPolicy.swift */; };
+		C548D097BAC7E2CAD2A0304D /* GuppycubeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 413B32BD9847ADFD81C9D766 /* GuppycubeApp.swift */; };
+		E26736AE81ED83F1C951A263 /* GameWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A0C47A8E3C161353182D24 /* GameWebView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		17315F3A60ECFC56547441AD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0766B1088E3C53AF5E5E2F2E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8EC685CDBA523483D3693306;
+			remoteInfo = Guppycube;
+		};
+		7FCC0037A8ACC7BE651AFC27 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0766B1088E3C53AF5E5E2F2E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8EC685CDBA523483D3693306;
+			remoteInfo = Guppycube;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		413B32BD9847ADFD81C9D766 /* GuppycubeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuppycubeApp.swift; sourceTree = "<group>"; };
+		523C59740F64FDB2B1008123 /* GameBrowserModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserModel.swift; sourceTree = "<group>"; };
+		65A0C47A8E3C161353182D24 /* GameWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameWebView.swift; sourceTree = "<group>"; };
+		78F468830EF7EA4292562ADD /* GuppycubeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GuppycubeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9CA836754D0E65C704872937 /* NavigationPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationPolicyTests.swift; sourceTree = "<group>"; };
+		ACD8C8A7850D88FEABA48C59 /* GuppycubeLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuppycubeLaunchTests.swift; sourceTree = "<group>"; };
+		C3FF5FD9475C0891E9320F49 /* NavigationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationPolicy.swift; sourceTree = "<group>"; };
+		C841113A2DAACE39C2BEA2EB /* GuppycubeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GuppycubeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CDC5CCFD6F7507B4F562A902 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
+		D099D0930A4E1CBB613F00E7 /* GameBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserView.swift; sourceTree = "<group>"; };
+		D44E735AEA301E8131857E8A /* Guppycube.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Guppycube.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E715D8CB3CF41574760EADEA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		09325EC6554474ACE7D2420E /* App */ = {
+			isa = PBXGroup;
+			children = (
+				CDC5CCFD6F7507B4F562A902 /* AppConfiguration.swift */,
+				413B32BD9847ADFD81C9D766 /* GuppycubeApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		111349FE7B1990AF7203EF4D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D44E735AEA301E8131857E8A /* Guppycube.app */,
+				78F468830EF7EA4292562ADD /* GuppycubeTests.xctest */,
+				C841113A2DAACE39C2BEA2EB /* GuppycubeUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		239634E3E4B319DDE83C8586 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				E715D8CB3CF41574760EADEA /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		2405B0DA47304E162342B95A /* Browser */ = {
+			isa = PBXGroup;
+			children = (
+				523C59740F64FDB2B1008123 /* GameBrowserModel.swift */,
+				D099D0930A4E1CBB613F00E7 /* GameBrowserView.swift */,
+				65A0C47A8E3C161353182D24 /* GameWebView.swift */,
+				C3FF5FD9475C0891E9320F49 /* NavigationPolicy.swift */,
+			);
+			path = Browser;
+			sourceTree = "<group>";
+		};
+		3BF200BD744973108C4FA649 /* GuppycubeTests */ = {
+			isa = PBXGroup;
+			children = (
+				9CA836754D0E65C704872937 /* NavigationPolicyTests.swift */,
+			);
+			path = GuppycubeTests;
+			sourceTree = "<group>";
+		};
+		4932C109B50D7C1C57A2F560 /* GuppycubeUITests */ = {
+			isa = PBXGroup;
+			children = (
+				ACD8C8A7850D88FEABA48C59 /* GuppycubeLaunchTests.swift */,
+			);
+			path = GuppycubeUITests;
+			sourceTree = "<group>";
+		};
+		7A720D59231A735979B8A8ED /* Guppycube */ = {
+			isa = PBXGroup;
+			children = (
+				09325EC6554474ACE7D2420E /* App */,
+				2405B0DA47304E162342B95A /* Browser */,
+				239634E3E4B319DDE83C8586 /* Resources */,
+			);
+			path = Guppycube;
+			sourceTree = "<group>";
+		};
+		7EE5165679DCC786E5A9BB41 = {
+			isa = PBXGroup;
+			children = (
+				7A720D59231A735979B8A8ED /* Guppycube */,
+				3BF200BD744973108C4FA649 /* GuppycubeTests */,
+				4932C109B50D7C1C57A2F560 /* GuppycubeUITests */,
+				111349FE7B1990AF7203EF4D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8EC685CDBA523483D3693306 /* Guppycube */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3EF8C4602E263423FC1C4AF7 /* Build configuration list for PBXNativeTarget "Guppycube" */;
+			buildPhases = (
+				885FA0921F844FE0A977E03F /* Sources */,
+				254E76D4015A48FB3B93530E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Guppycube;
+			packageProductDependencies = (
+			);
+			productName = Guppycube;
+			productReference = D44E735AEA301E8131857E8A /* Guppycube.app */;
+			productType = "com.apple.product-type.application";
+		};
+		DAC63D1BEAAABAD29805F4CE /* GuppycubeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ED968FE31FCDCE0737E10599 /* Build configuration list for PBXNativeTarget "GuppycubeTests" */;
+			buildPhases = (
+				F64967C20BD6A7625629148E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DA4F32D2A751B6C676DA6243 /* PBXTargetDependency */,
+			);
+			name = GuppycubeTests;
+			packageProductDependencies = (
+			);
+			productName = GuppycubeTests;
+			productReference = 78F468830EF7EA4292562ADD /* GuppycubeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F8F7A249443300C7B49591F9 /* GuppycubeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6D9254BA94EBA111818AE30C /* Build configuration list for PBXNativeTarget "GuppycubeUITests" */;
+			buildPhases = (
+				C90A8ADEB0F1BEEBF42080C7 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6FCAE7D8CDAC64D79D24B93E /* PBXTargetDependency */,
+			);
+			name = GuppycubeUITests;
+			packageProductDependencies = (
+			);
+			productName = GuppycubeUITests;
+			productReference = C841113A2DAACE39C2BEA2EB /* GuppycubeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0766B1088E3C53AF5E5E2F2E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					8EC685CDBA523483D3693306 = {
+						ProvisioningStyle = Automatic;
+					};
+					DAC63D1BEAAABAD29805F4CE = {
+						ProvisioningStyle = Automatic;
+					};
+					F8F7A249443300C7B49591F9 = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = 8EC685CDBA523483D3693306;
+					};
+				};
+			};
+			buildConfigurationList = DD114749076F4EC4CE2409EE /* Build configuration list for PBXProject "Guppycube" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 7EE5165679DCC786E5A9BB41;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 111349FE7B1990AF7203EF4D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8EC685CDBA523483D3693306 /* Guppycube */,
+				DAC63D1BEAAABAD29805F4CE /* GuppycubeTests */,
+				F8F7A249443300C7B49591F9 /* GuppycubeUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		254E76D4015A48FB3B93530E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3470D96855C120718F745D4A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		885FA0921F844FE0A977E03F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8203325862B4C82AF13D92E4 /* AppConfiguration.swift in Sources */,
+				7424AB8D8B5F06864F673729 /* GameBrowserModel.swift in Sources */,
+				20E2B208C50B5D2227B9E78A /* GameBrowserView.swift in Sources */,
+				E26736AE81ED83F1C951A263 /* GameWebView.swift in Sources */,
+				C548D097BAC7E2CAD2A0304D /* GuppycubeApp.swift in Sources */,
+				BD7227ADD59C48861E87EE74 /* NavigationPolicy.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C90A8ADEB0F1BEEBF42080C7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8FB90CC8BF3E430FD60F83F7 /* GuppycubeLaunchTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F64967C20BD6A7625629148E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1BDBE135399404D429E95A8C /* NavigationPolicyTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6FCAE7D8CDAC64D79D24B93E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8EC685CDBA523483D3693306 /* Guppycube */;
+			targetProxy = 17315F3A60ECFC56547441AD /* PBXContainerItemProxy */;
+		};
+		DA4F32D2A751B6C676DA6243 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8EC685CDBA523483D3693306 /* Guppycube */;
+			targetProxy = 7FCC0037A8ACC7BE651AFC27 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0971F3E4B7ABF6592D12FE62 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		281AD52F1FABFF811A89745B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Configuration/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.snagsby.guppycube;
+				PRODUCT_NAME = Guppycube;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3BDCCE05FA6CD011B9002E9B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.snagsby.guppycube.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Guppycube.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Guppycube";
+			};
+			name = Release;
+		};
+		47CF0BF76A15F5E4777E46BE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.snagsby.guppycube.ui-tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Guppycube;
+			};
+			name = Release;
+		};
+		BB6C845B39F052F5139F87CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.snagsby.guppycube.ui-tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Guppycube;
+			};
+			name = Debug;
+		};
+		DA9826499C34EFB11E74FD2C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Configuration/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.snagsby.guppycube;
+				PRODUCT_NAME = Guppycube;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E069ADF61D00E5FDD26EF386 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.snagsby.guppycube.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Guppycube.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Guppycube";
+			};
+			name = Debug;
+		};
+		F2BB27242E0D31CC08157E03 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3EF8C4602E263423FC1C4AF7 /* Build configuration list for PBXNativeTarget "Guppycube" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA9826499C34EFB11E74FD2C /* Debug */,
+				281AD52F1FABFF811A89745B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6D9254BA94EBA111818AE30C /* Build configuration list for PBXNativeTarget "GuppycubeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB6C845B39F052F5139F87CE /* Debug */,
+				47CF0BF76A15F5E4777E46BE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DD114749076F4EC4CE2409EE /* Build configuration list for PBXProject "Guppycube" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F2BB27242E0D31CC08157E03 /* Debug */,
+				0971F3E4B7ABF6592D12FE62 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ED968FE31FCDCE0737E10599 /* Build configuration list for PBXNativeTarget "GuppycubeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E069ADF61D00E5FDD26EF386 /* Debug */,
+				3BDCCE05FA6CD011B9002E9B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0766B1088E3C53AF5E5E2F2E /* Project object */;
+}

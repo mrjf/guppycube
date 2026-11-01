@@ -95,6 +95,102 @@ describe("cookie-authenticated game API", () => {
     expect(new URL(link.link).searchParams.get("player")).toBe(player);
   });
 
+  test("lets the host create a rejoin link that authenticates another player in a fresh browser", async () => {
+    const create = await gameRequest("/api/games", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "Rejoin Host", mode: "correspondence", maxPlayers: 2 }),
+    });
+    expect(create.status).toBe(201);
+    const session = await create.json<{ roomCode: string }>();
+    const hostCookie = create.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+    const hostCredentials = decodeSessionCookie(hostCookie, session.roomCode) as {
+      playerId: string;
+      token: string;
+    };
+
+    const join = await gameRequest(`/api/games/${session.roomCode}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "Rejoin Guest" }),
+    });
+    expect(join.status).toBe(201);
+    const guestCookie = join.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+    const guestCredentials = decodeSessionCookie(guestCookie, session.roomCode) as {
+      playerId: string;
+      token: string;
+    };
+    expect(guestCredentials.playerId).not.toBe(hostCredentials.playerId);
+
+    const rejoin = await gameRequest(
+      `/api/games/${session.roomCode}/players/${encodeURIComponent(guestCredentials.playerId)}/rejoin-link`,
+      { method: "POST", headers: { Cookie: hostCookie } },
+    );
+    expect(rejoin.status).toBe(201);
+    const payload = await rejoin.json<{ link: string }>();
+    const link = new URL(payload.link);
+    expect(link.pathname).toBe(`/room/${session.roomCode}`);
+    const player = link.searchParams.get("player");
+    expect(player).toBeTruthy();
+    const playerSeparator = player!.indexOf(".");
+    const linkedPlayerId = player!.slice(0, playerSeparator);
+    const linkedToken = player!.slice(playerSeparator + 1);
+    expect(playerSeparator).toBeGreaterThan(0);
+    expect(linkedPlayerId).toBe(guestCredentials.playerId);
+    expect(linkedPlayerId).not.toBe(hostCredentials.playerId);
+    expect(linkedToken).toBeTruthy();
+
+    const freshState = await gameRequest(`/api/games/${session.roomCode}${link.search}`);
+    expect(freshState.status).toBe(200);
+    const restoredCookie = freshState.headers.get("Set-Cookie");
+    expect(restoredCookie).toContain(`guppycube_session_${session.roomCode}=`);
+    expect(decodeSessionCookie(restoredCookie ?? "", session.roomCode)).toEqual({
+      roomCode: session.roomCode,
+      playerId: guestCredentials.playerId,
+      token: linkedToken,
+    });
+    await expect(freshState.json()).resolves.toEqual(expect.objectContaining({
+      id: session.roomCode,
+      myPlayerId: guestCredentials.playerId,
+    }));
+
+    const originalGuestState = await gameRequest(`/api/games/${session.roomCode}`, {
+      headers: { Cookie: guestCookie },
+    });
+    expect(originalGuestState.status).toBe(200);
+    await expect(originalGuestState.json()).resolves.toEqual(expect.objectContaining({
+      myPlayerId: guestCredentials.playerId,
+    }));
+  });
+
+  test("does not let a non-host create another player's rejoin link", async () => {
+    const create = await gameRequest("/api/games", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "Protected Host", mode: "realtime", maxPlayers: 2 }),
+    });
+    const session = await create.json<{ roomCode: string }>();
+    const hostCookie = create.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+    const hostCredentials = decodeSessionCookie(hostCookie, session.roomCode) as { playerId: string };
+
+    const join = await gameRequest(`/api/games/${session.roomCode}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://127.0.0.1" },
+      body: JSON.stringify({ name: "Protected Guest" }),
+    });
+    const guestCookie = join.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+
+    const response = await gameRequest(
+      `/api/games/${session.roomCode}/players/${encodeURIComponent(hostCredentials.playerId)}/rejoin-link`,
+      { method: "POST", headers: { Cookie: guestCookie } },
+    );
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual(expect.objectContaining({
+      error: expect.stringMatching(/host/i),
+      code: "host_required",
+    }));
+  });
+
   test("lists every room identified by the browser's session cookies", async () => {
     const first = await gameRequest("/api/games", {
       method: "POST",

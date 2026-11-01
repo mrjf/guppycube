@@ -296,9 +296,8 @@ function layoutAtScale(
 }
 
 /**
- * Packs the felt without scrollbars. Full-size sets are spread through four
- * rows before a second set is added to a row; only then does the engine
- * progressively shrink the whole board.
+ * Packs the felt without scrollbars. Sets shrink as far as needed so that
+ * every set stays visible inside the viewport, on every screen size.
  */
 export function createFeltLayout(
   items: readonly FeltLayoutItem[],

@@ -7,6 +7,8 @@ const identifier = { type: "string", minLength: 1, maxLength: 80 } as const;
 const timestamp = { type: "integer", minimum: 0 } as const;
 const nullableTimestamp = { type: ["integer", "null"], minimum: 0 } as const;
 const nullableIdentifier = { type: ["string", "null"], minLength: 1, maxLength: 80 } as const;
+const tokenHash = { type: "string", pattern: "^[a-f0-9]{64}$" } as const;
+const nullableTokenHash = { type: ["string", "null"], pattern: "^[a-f0-9]{64}$" } as const;
 const gameModes = ["realtime", "correspondence"] as const;
 const gameStatuses = ["lobby", "playing", "finished"] as const;
 const eventKinds = ["created", "joined", "started", "played", "drew", "timeout", "won"] as const;
@@ -90,6 +92,16 @@ const turnDraftShape = {
   required: ["playerId", "turnStartedAt", "sequence", "board"],
 } as const;
 
+const preMoveShape = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
+    baseBoard: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
+  },
+  required: ["board", "baseBoard"],
+} as const;
+
 const publicPlayerShape = {
   type: "object",
   additionalProperties: false,
@@ -133,15 +145,17 @@ const storedPlayerShape = {
   properties: {
     id: identifier,
     name: { type: "string", minLength: 1, maxLength: 20 },
-    tokenHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    tokenHash,
+    rejoinTokenHash: nullableTokenHash,
     rack: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
     opened: { type: "boolean" },
     joinedAt: timestamp,
     isComputer: { type: "boolean" },
     computerStrategy: nullableComputerStrategy,
     enabledAssists: enabledAssistsShape,
+    preMove: { anyOf: [preMoveShape, { type: "null" }] },
   },
-  required: ["id", "name", "tokenHash", "rack", "opened", "joinedAt", "isComputer", "computerStrategy", "enabledAssists"],
+  required: ["id", "name", "tokenHash", "rejoinTokenHash", "rack", "opened", "joinedAt", "isComputer", "computerStrategy", "enabledAssists", "preMove"],
 } as const;
 
 const turnActionVariants = [
@@ -218,6 +232,7 @@ const publicGameStateShape = {
     myRack: { type: "array", items: identifier, maxItems: TILE_SET_SIZE },
     turnDraft: { anyOf: [{ type: "array", items: setShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
     myTurnDraft: { anyOf: [{ type: "array", items: setShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
+    myPreMove: { anyOf: [{ type: "array", items: setShape, maxItems: TILE_SET_SIZE }, { type: "null" }] },
     tiles: { type: "object", additionalProperties: tileShape, maxProperties: TILE_SET_SIZE },
     history: { type: "array", items: gameEventShape, maxItems: 12 },
     scores: scoreShape,
@@ -244,6 +259,7 @@ const publicGameStateShape = {
     "myRack",
     "turnDraft",
     "myTurnDraft",
+    "myPreMove",
     "tiles",
     "history",
     "scores",
@@ -403,6 +419,8 @@ export const saveTurnDraftInputSchema = {
     turnStartedAt: timestamp,
     sequence: timestamp,
     board: { type: "array", items: setShape, maxItems: TILE_SET_SIZE },
+    preMove: { type: "boolean" },
+    clearPreMove: { type: "boolean" },
   },
   required: ["turnStartedAt", "sequence", "board"],
 } as const;

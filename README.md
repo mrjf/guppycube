@@ -26,7 +26,7 @@ Use Bun 1.4.0 or newer, then open the shown local URL. If a Bono-compatible loca
 
 To test multiplayer, create a room in one browser and open the invite in another browser/profile. The timeout E2E cases use a loopback-only per-room override so they do not wait for the production one-minute deadline.
 
-Local development rooms survive reloads and dev-server restarts. Room state is stored in `.wrangler/state`. Ordinary visits use an API-scoped `HttpOnly` browser cookie, while the copy button creates a portable personal URL containing that player’s secure link credential; a new browser can use the URL without a cookie. Use the in-game exit action when you intentionally want to return to the new/join table screen.
+Local development rooms survive reloads and dev-server restarts. Room state is stored in `.wrangler/state`. Ordinary visits use an API-scoped `HttpOnly` browser cookie, while the copy button creates a portable personal URL containing that player’s secure link credential; a new browser can use the URL without a cookie. The host can also copy a rejoin link beside any other human player, before or after the game starts. Creating a new host-issued link replaces that player’s previous host-issued link without invalidating their original login. Use the in-game exit action when you intentionally want to return to the new/join table screen.
 
 Useful checks:
 
@@ -68,6 +68,7 @@ Free-plan limits are account-wide. When a limit is reached, Cloudflare rejects a
 - When the pool is empty and every player passes, the lowest rack value wins
 - Official highest-tile starting player, 1-minute live deadlines, 3-tile incomplete-turn penalties, and 72-hour correspondence deadlines
 - Extensible per-player assists, beginning with a no-legal-move alert and server-side auto-draw
+- Shared rack + felt move analysis covering openings, rack-only sets, felt extensions, wildcard replay, and full rearrangements; the in-game Move Finder can list and stage proven plays
 
 When a table is created, each assist can be allowed on by default, allowed off by default, or disallowed. Players may change any allowed assist for their own seat. Choices are persisted in the room, and auto-draw runs from Durable Object state and alarms, so it continues to work while that player is offline.
 

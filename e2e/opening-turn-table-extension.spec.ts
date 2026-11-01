@@ -45,6 +45,7 @@ interface GameState {
   myRack: string[];
   turnDraft: GameSet[] | null;
   myTurnDraft: GameSet[] | null;
+  myPreMove: GameSet[] | null;
   tiles: Record<string, {
     id: string;
     color: "coral" | "sun" | "ocean" | "ink";
@@ -135,6 +136,7 @@ function initialState(): GameState {
     myRack,
     turnDraft: null,
     myTurnDraft: null,
+    myPreMove: null,
     tiles: Object.fromEntries(allTiles.map((entry) => [entry.id, entry])),
     history: [
       {

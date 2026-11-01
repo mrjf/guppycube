@@ -20,6 +20,7 @@ interface TileViewProps {
   onDragEnd?: (event: DragEvent<HTMLButtonElement>) => void;
   onDrop?: (event: DragEvent<HTMLButtonElement>) => void;
   onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerMove?: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerUp?: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerCancel?: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerLeave?: (event: PointerEvent<HTMLButtonElement>) => void;
@@ -43,6 +44,7 @@ export function TileView({
   onDragEnd,
   onDrop,
   onPointerDown,
+  onPointerMove,
   onPointerUp,
   onPointerCancel,
   onPointerLeave,
@@ -75,6 +77,7 @@ export function TileView({
       onDragOver={(event) => event.preventDefault()}
       onDrop={onDrop}
       onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       onPointerLeave={onPointerLeave}

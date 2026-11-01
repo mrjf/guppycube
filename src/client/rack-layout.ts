@@ -145,6 +145,13 @@ export function placeRackTilesAtSlot(
     return typeof tileId === "string" && movingSet.has(tileId);
   });
 
+  // Dropping a rack selection onto any tile in that same selection means the
+  // bundle was put back where it came from. Treat the whole gesture as a
+  // no-op rather than rotating the selected tiles around the targeted member.
+  if (addedCount === 0 && typeof targetTileId === "string" && movingSet.has(targetTileId)) {
+    return layout;
+  }
+
   if (typeof targetTileId !== "string") {
     // An empty slot is a direct destination. Reuse the slots vacated by the
     // moving tiles for any additional selected tiles instead of displacing
